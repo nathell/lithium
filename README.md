@@ -1,0 +1,1 @@
+License: MIT license.  A more detailed README will follow.
