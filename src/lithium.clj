@@ -1,6 +1,6 @@
 (ns lithium
-  (:use [clojure.core.match.core :only [match]]
-        [clojure.java.shell      :only [sh]]))
+  (:use [clojure.core.match :only [match]]
+        [clojure.java.shell :only [sh]]))
 
 (defmacro deftable [name headers & data]
   `(def ~name
