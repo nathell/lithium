@@ -79,6 +79,7 @@
                       :immediate (imm (-> op1 +registers+ :size) op2)}
     [:jne :label nil] {:opcode 0x75, :immediate [8 op1]}
     [:loop :label nil] {:opcode 0xe2, :immediate [8 op1]}
+    [:jmp :label nil] {:opcode 0xeb, :immediate [8 op1]}
     [:int :imm nil]  (if (= op1 3)
                        {:opcode 0xcc}
                        {:opcode 0xcd, :immediate (imm 8 op1)})))
