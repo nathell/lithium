@@ -120,10 +120,15 @@
                 cnt (count assembled)]
             (recur (next prog) (into code assembled) (+ pc cnt) labels)))))))
 
-(defn run! [prog]
-  (let [filename "/tmp/a.com"
-        assembled (asm (if (string? prog) (read-string (str "[" (slurp prog) "]")) prog))]
-    (with-open [f (java.io.FileOutputStream. filename)]
+(defn assemble-file [prog out]
+  (let [assembled (asm (if (string? prog) (read-string (str "[" (slurp prog) "]")) prog))
+        byte-arr  (into-array Byte/TYPE (map #(byte (if (>= % 128) (- % 256) %)) assembled))]
+    (with-open [f (java.io.FileOutputStream. out)]
       (.write f (into-array Byte/TYPE (map #(byte (if (>= % 128) (- % 256) %)) assembled)))
-      (sh "dosbox" filename)
       nil)))
+
+(defn run! [prog]
+  (let [filename "/tmp/a.com"]
+    (assemble-file prog filename)
+    (sh "dosbox" filename)
+    nil))
