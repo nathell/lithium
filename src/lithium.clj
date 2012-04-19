@@ -77,7 +77,24 @@
                       :modrm (when-not (#{:al :ax} op1)
                                (modrm 3 7 (-> op1 +registers+ :value)))
                       :immediate (imm (-> op1 +registers+ :size) op2)}
+    [:add :reg :imm] {:opcode (cond (= op1 :al) 0x04
+                                    (= op1 :ax) 0x05
+                                    (= (-> op1 +registers+ :size) 8) 0x80
+                                    true 0x81),
+                      :modrm (when-not (#{:al :ax} op1)
+                               (modrm 3 0 (-> op1 +registers+ :value)))
+                      :immediate (imm (-> op1 +registers+ :size) op2)}
+    [:sal :reg :imm] {:opcode (cond (and (= (-> op1 +registers+ :size) 8) (= op2 1)) 0xd0
+                                    (= (-> op1 +registers+ :size) 8) 0xc0
+                                    (= op2 1) 0xd1
+                                    true 0xc1),
+                      :modrm (modrm 3 4 (-> op1 +registers+ :value)),
+                      :immediate (imm 8 op2)}
+    [:or :reg :imm] {:opcode (if (= (-> op1 +registers+ :size) 8) 0x80 0x81)
+                     :modrm (modrm 3 1 (-> op1 +registers+ :value)),
+                     :immediate (imm (-> op1 +registers+ :size) op2)}
     [:jne :label nil] {:opcode 0x75, :immediate [8 op1]}
+    [:sete :reg nil] {:opcode [0x0f 0x94], :modrm (modrm 3 0 (-> op1 +registers+ :value))}
     [:loop :label nil] {:opcode 0xe2, :immediate [8 op1]}
     [:jmp :label nil] {:opcode 0xeb, :immediate [8 op1]}
     [:int :imm nil]  (if (= op1 3)
@@ -92,7 +109,7 @@
 (defn instruction->bytes
   [{:keys [prefixes opcode modrm sib displacement immediate]}]
   (vec (concat
-        [opcode]
+        (if (sequential? opcode) opcode [opcode])
         (when modrm [modrm])
         (when immediate (word-to-bytes immediate)))))
 
