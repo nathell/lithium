@@ -1,6 +1,6 @@
 (ns lithium
-  (:use [clojure.core.match :only [match]]
-        [clojure.java.shell :only [sh]]))
+  (:require [clojure.string :as string])
+  (:use [clojure.java.shell :only [sh]]))
 
 (defmacro deftable [name headers & data]
   `(def ~name
@@ -34,6 +34,10 @@
 (def +general-register-set+ (set (map key (filter #(= (:type (val %)) :general) +registers+))))
 (def +segment-register-set+ (set (map key (filter #(= (:type (val %)) :segment) +registers+))))
 
+(def +condition-codes+
+     {:o 0 :no 1 :b 2 :c 2 :nae 2 :ae 3 :nb 3 :nc 3 :e 4 :z 4 :ne 5 :nz 5 :be 6 :na 6 :a 7 :nbe 7
+      :s 8 :ns 9 :p 10 :pe 10 :np 11 :po 11 :l 12 :nge 12 :ge 13 :nl 13 :le 14 :ng 14 :g 15 :nle 15})
+
 (defn operand-type [operand]
   (cond
    (+general-register-set+ operand) :reg
@@ -53,67 +57,99 @@
      (bit-shift-left spare 3)
      rm))
 
-(defn decompose-instruction [[instr op1 op2]]
-  (match [(-> instr name keyword) (operand-type op1) (operand-type op2)]
-    [:mov :reg :imm] {:opcode (+ (if (= (-> op1 +registers+ :size) 8) 0xb0 0xb8)
-                                 (-> op1 +registers+ :value)),
-                      :immediate (imm (-> op1 +registers+ :size) op2)}
-    [:mov :sreg :reg] {:opcode 0x8e,
-                       :modrm (modrm 3 (-> op1 +registers+ :value) (-> op2 +registers+ :value))}
-    [:xor :reg :reg] {:opcode (if (= (-> op1 +registers+ :size) 8) 0x30 0x31),
-                      :modrm (modrm 3 (-> op1 +registers+ :value) (-> op2 +registers+ :value))}
-    [:push :reg nil] {:opcode (+ 0x50 (-> op1 +registers+ :value))}
-    [:pop :reg nil] {:opcode (+ 0x58 (-> op1 +registers+ :value))}
-    [:stosb nil nil] {:opcode 0xaa}
-    [:ret nil nil] {:opcode 0xc3}
-    [:inc :reg nil] (if (= (-> op1 +registers+ :size) 8)
-                      {:opcode 0xfe,
-                       :modrm (modrm 3 0 (-> op1 +registers+ :value))}
-                      {:opcode (+ 0x40 (-> op1 +registers+ :value))})
-    [:cmp :reg :imm] {:opcode (cond (= op1 :al) 0x3c
-                                    (= op1 :ax) 0x3d
-                                    (= (-> op1 +registers+ :size) 8) 0x80
-                                    true 0x81),
-                      :modrm (when-not (#{:al :ax} op1)
-                               (modrm 3 7 (-> op1 +registers+ :value)))
-                      :immediate (imm (-> op1 +registers+ :size) op2)}
-    [:add :reg :imm] {:opcode (cond (= op1 :al) 0x04
-                                    (= op1 :ax) 0x05
-                                    (= (-> op1 +registers+ :size) 8) 0x80
-                                    true 0x81),
-                      :modrm (when-not (#{:al :ax} op1)
-                               (modrm 3 0 (-> op1 +registers+ :value)))
-                      :immediate (imm (-> op1 +registers+ :size) op2)}
-    [:sal :reg :imm] {:opcode (cond (and (= (-> op1 +registers+ :size) 8) (= op2 1)) 0xd0
-                                    (= (-> op1 +registers+ :size) 8) 0xc0
-                                    (= op2 1) 0xd1
-                                    true 0xc1),
-                      :modrm (modrm 3 4 (-> op1 +registers+ :value)),
-                      :immediate (imm 8 op2)}
-    [:or :reg :imm] {:opcode (if (= (-> op1 +registers+ :size) 8) 0x80 0x81)
-                     :modrm (modrm 3 1 (-> op1 +registers+ :value)),
-                     :immediate (imm (-> op1 +registers+ :size) op2)}
-    [:jne :label nil] {:opcode 0x75, :immediate [8 op1]}
-    [:sete :reg nil] {:opcode [0x0f 0x94], :modrm (modrm 3 0 (-> op1 +registers+ :value))}
-    [:loop :label nil] {:opcode 0xe2, :immediate [8 op1]}
-    [:jmp :label nil] {:opcode 0xeb, :immediate [8 op1]}
-    [:int :imm nil]  (if (= op1 3)
-                       {:opcode 0xcc}
-                       {:opcode 0xcd, :immediate (imm 8 op1)})))
+(defn reg8  [x] (let [info (+registers+ x)] (and info (= (:type info) :general) (= (:size info) 8))))
+(defn reg16 [x] (let [info (+registers+ x)] (and info (= (:type info) :general) (= (:size info) 16))))
+(defn sreg  [x] (let [info (+registers+ x)] (and info (= (:type info) :segment))))
+(defn imm8  [x] (and (integer? x) (<= 0 x 255)))
+(defn imm16 [x] (and (integer? x) (<= 0 x 65535)))
+(defn rm8   [x] (reg8 x))
+(defn rm16  [x] (reg16 x))
+(defn label [x] (keyword? x))
+
+(def assembly-table
+     [[:mov reg8 imm8]    [[:r+ 0xb0] :ib]
+      [:mov reg16 imm16]  [[:r+ 0xb8] :iw]
+      [:mov sreg rm16]    [0x8e :r]
+      [:xor rm8 reg8]     [0x30 :r]
+      [:xor rm16 reg16]   [0x31 :r]
+      [:push reg16]       [[:r+ 0x50]]
+      [:pop reg16]        [[:r+ 0x58]]
+      [:stosb]            [0xaa]
+      [:ret]              [0xc3]
+      [:inc reg16]        [[:r+ 0x40]]
+      [:inc reg8]         [0xfe :0]
+      [:cmp :al imm8]     [0x3c :ib]
+      [:cmp :ax imm16]    [0x3d :iw]
+      [:cmp rm8 imm8]     [0x80 :7 :ib]
+      [:cmp rm16 imm16]   [0x81 :7 :iw]
+      [:add :al imm8]     [0x04 :ib]
+      [:add :ax imm16]    [0x05 :iw]
+      [:add rm8 imm8]     [0x80 :0 :ib]
+      [:add rm16 imm16]   [0x81 :7 :iw]
+      [:sal rm8 1]        [0xd0 :4]
+      [:sal rm8 imm8]     [0xc0 :4 :ib]
+      [:sal rm16 1]       [0xd1 :4]
+      [:sal rm16 imm8]    [0xc1 :4 :ib]
+      [:or rm8 imm8]      [0x80 :1 :ib]
+      [:or rm16 imm16]    [0x81 :1 :iw]
+      [:jCC label]        [[:cc+ 0x70] :rb]
+      [:setCC rm8]        [0x0f [:cc+ 0x90] :2]
+      [:loop label]       [0xe2 :rb]
+      [:jmp label]        [0xeb :rb]
+      [:int 3]            [0xcc]
+      [:int imm8]         [0xcd :ib]])
+
+(defn extract-cc [instr template]
+  (let [re (re-pattern (string/replace (name template) "CC" "(.+)"))]
+    (when-let [cc-s (second (re-find re (name instr)))]
+      (keyword cc-s))))
+
+(defn part-of-spec-matches? [datum template]
+  (if (fn? template) (template datum) (= datum template)))
+
+(defn instruction-matches? [instr [template _]]
+  (let [f1 (first instr)
+        f2 (first template)]
+    (and (or (= (name f1) (name f2))
+             ((set (keys +condition-codes+)) (extract-cc f1 f2)))
+         (= (count instr) (count template))
+         (reduce #(and %1 %2) true (map part-of-spec-matches? (rest instr) (rest template))))))
+
+(defn find-template [instr]
+  (first (filter (partial instruction-matches? instr)
+                 (partition 2 assembly-table))))
 
 (defn word-to-bytes [[size w]]
   (condp = size
       8 [w]
       16 [(bit-and w 0xff) (bit-shift-right w 8)]))
 
-(defn instruction->bytes
-  [{:keys [prefixes opcode modrm sib displacement immediate]}]
-  (vec (concat
-        (if (sequential? opcode) opcode [opcode])
-        (when modrm [modrm])
-        (when immediate (word-to-bytes immediate)))))
+(defn lenient-parse-int [x]
+  (try
+    (Integer/parseInt x)
+    (catch NumberFormatException _ nil)))
 
-(def assemble-instruction (comp instruction->bytes decompose-instruction))
+(defn parse-byte [[instr op1 op2] [instr-template op1-template op2-template] byte-desc]
+  (let [imm (cond (#{imm8 imm16} op1-template) op1 (#{imm8 imm16} op2-template) op2)]
+    (cond
+     (integer? byte-desc) [byte-desc]
+     (= byte-desc :ib) (word-to-bytes [8 imm])
+     (= byte-desc :iw) (word-to-bytes [16 imm])
+     (= byte-desc :rb) [op1]
+     (and (keyword? byte-desc) (lenient-parse-int (name byte-desc)))
+       [(modrm 3 (lenient-parse-int (name byte-desc)) (-> op1 +registers+ :value))]
+     (= byte-desc :r)
+       [(modrm 3 (-> op1 +registers+ :value) (-> op2 +registers+ :value))]
+     (and (sequential? byte-desc) (= (first byte-desc) :r+))
+       [(+ (second byte-desc) (-> op1 +registers+ :value))]
+     (and (sequential? byte-desc) (= (first byte-desc) :cc+))
+       [(+ (second byte-desc) (-> instr (extract-cc instr-template) +condition-codes+))])))
+
+(defn assemble-instruction [instr]
+  (let [[template parts] (find-template instr)]
+    (when-not template (throw (Exception. (str "Could not assemble instruction: " (pr-str instr)))))
+    (let [assembled-parts (map (partial parse-byte instr template) parts)]
+      (apply concat assembled-parts))))
 
 (defn unsigned-byte [x]
   (if (< x 0) (+ x 256) x))
