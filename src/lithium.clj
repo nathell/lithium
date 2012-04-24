@@ -62,8 +62,9 @@
 (defn sreg  [x] (let [info (+registers+ x)] (and info (= (:type info) :segment))))
 (defn imm8  [x] (and (integer? x) (<= 0 x 255)))
 (defn imm16 [x] (and (integer? x) (<= 0 x 65535)))
-(defn rm8   [x] (reg8 x))
-(defn rm16  [x] (reg16 x))
+(defn mem   [x] (vector? x))
+(defn rm8   [x] (or (reg8 x) (mem x)))
+(defn rm16  [x] (or (reg16 x) (mem x)))
 (defn label [x] (keyword? x))
 
 (def assembly-table
@@ -111,8 +112,8 @@
   (let [f1 (first instr)
         f2 (first template)]
     (and (or (= (name f1) (name f2))
-             ((set (keys +condition-codes+)) (extract-cc f1 f2)))
-         (= (count instr) (count template))
+             ((set (keys +condition-codes+)) (extract-cc f1 f2))) 
+        (= (count instr) (count template))
          (reduce #(and %1 %2) true (map part-of-spec-matches? (rest instr) (rest template))))))
 
 (defn find-template [instr]
@@ -120,26 +121,45 @@
                  (partition 2 assembly-table))))
 
 (defn word-to-bytes [[size w]]
-  (condp = size
-      8 [w]
-      16 [(bit-and w 0xff) (bit-shift-right w 8)]))
+  (let [w (if (neg? w) (+ w (bit-shift-left 1 size)) w)]
+    (condp = size
+        0 []
+        8 [w]
+        16 [(bit-and w 0xff) (bit-shift-right w 8)])))
 
 (defn lenient-parse-int [x]
   (try
     (Integer/parseInt x)
     (catch NumberFormatException _ nil)))
 
+(defn make-modrm [rm-desc spare]
+  (if (keyword? rm-desc)
+    [(modrm 3 spare (-> rm-desc +registers+ :value))]
+    (let [registers (vec (sort-by name (filter keyword? rm-desc)))
+          displacement (reduce + 0 (filter integer? rm-desc))
+          rm-map {[:bx :si] 0 [:bx :di] 1 [:bp :si] 2 [:bp :di] 3 [:si] 4 [:di] 5 [:bp] 6 [] 6 [:bx] 7}
+          mod (cond
+               (or (and (zero? displacement) (not= registers [:bp])) (empty? registers)) 0
+               (or (and (zero? displacement) (= registers [:bp])) (<= -128 displacement 127)) 1
+               (<= -32768 displacement 32767) 2)
+          rm (rm-map registers)]
+      (when-not rm
+        (throw (Exception. (format "Incorrect memory reference: %s" rm-desc))))
+      (into [(modrm mod spare rm)] (word-to-bytes [(* 8 (if (empty? registers) 2 mod)) displacement])))))
+
 (defn parse-byte [[instr op1 op2] [instr-template op1-template op2-template] byte-desc]
-  (let [imm (cond (#{imm8 imm16} op1-template) op1 (#{imm8 imm16} op2-template) op2)]
+  (let [imm (cond (#{imm8 imm16} op1-template) op1 (#{imm8 imm16} op2-template) op2)
+        rm (cond (#{rm8 rm16} op1-template) op1 (#{rm8 rm16} op2-template) op2)
+        not-rm (if (= rm op1) op2 op1)]
     (cond
      (integer? byte-desc) [byte-desc]
      (= byte-desc :ib) (word-to-bytes [8 imm])
      (= byte-desc :iw) (word-to-bytes [16 imm])
      (= byte-desc :rb) [op1]
      (and (keyword? byte-desc) (lenient-parse-int (name byte-desc)))
-       [(modrm 3 (lenient-parse-int (name byte-desc)) (-> op1 +registers+ :value))]
+       (make-modrm rm (lenient-parse-int (name byte-desc)))
      (= byte-desc :r)
-       [(modrm 3 (-> op1 +registers+ :value) (-> op2 +registers+ :value))]
+       (make-modrm rm (-> not-rm +registers+ :value))
      (and (sequential? byte-desc) (= (first byte-desc) :r+))
        [(+ (second byte-desc) (-> op1 +registers+ :value))]
      (and (sequential? byte-desc) (= (first byte-desc) :cc+))
