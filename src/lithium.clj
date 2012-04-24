@@ -45,12 +45,6 @@
    (integer? operand)       :imm
    (keyword? operand)       :label))
 
-(defn imm [n v]
-  (let [maxv (dec (bit-shift-left 1 n))]
-    (when-not (<= 0 v maxv)
-      (throw (Exception. (format "Incorrect %d-bit immediate value: %s" n v))))
-    [n v]))
-
 (defn modrm
   [mod spare rm]
   (+ (bit-shift-left mod 6)
