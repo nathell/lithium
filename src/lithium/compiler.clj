@@ -1,6 +1,6 @@
-(ns beryl
+(ns lithium.compiler
   (:require [clojure.string :as string])
-  (:use lithium))
+  (:use lithium.assembler))
 
 (defn boolean? [x]
   (or (= x true) (= x false)))
