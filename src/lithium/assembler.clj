@@ -1,4 +1,4 @@
-(ns lithium
+(ns lithium.assembler
   (:require [clojure.string :as string])
   (:use [clojure.java.shell :only [sh]]))
 
