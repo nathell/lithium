@@ -64,6 +64,64 @@
      (compile-expr else-expr si env)
      [l1])))
 
+(def primitives {})
+
+(defmacro defprimitive [name args & code]
+  (let [code (partition-by vector? code)]
+    `(def primitives
+       (assoc primitives '~name
+              (fn [~'si ~'env [_# ~@args]]
+                (concat
+                 ~@(apply concat
+                          (for [x code]
+                            (if (vector? (first x))
+                              (vector (vec x))
+                              x)))))))))
+
+(defprimitive + [a b]
+  (compile-expr b si env)
+  [:mov [:bp si] :ax]
+  (compile-expr a (- si wordsize) env)
+  [:add :ax [:bp si]])
+
+(defprimitive * [a b]
+  (compile-expr b si env)
+  [:sar :ax 2]
+  [:mov [:bp si] :ax]
+  (compile-expr a (- si wordsize) env)
+  [:mul [:bp si]])
+
+(defprimitive < [a b]
+  (compile-expr b si env)
+  [:mov [:bp si] :ax]
+  (compile-expr a (- si wordsize) env)
+  [:xor :bx :bx]
+  [:cmp :ax [:bp si]]
+  [:setb :bl]
+  [:mov :ax :bx]
+  [:sal :ax 7]
+  [:or :ax +boolean-tag+])
+
+(defprimitive write-char [x]
+  (compile-expr x si env)
+  [:mov :ah 0x0e]
+  [:int 0x10])
+
+(defprimitive byte [x]
+  [:mov :al x])
+
+(defprimitive inc [x]
+  (compile-expr x si env)
+  [:add :ax (immediate-rep 1)])
+
+(defprimitive nil? [x]
+  (compile-expr (second x) si env)
+  [:cmp :ax +nil+]
+  [:mov :ax 0]
+  [:sete :al]
+  [:sal :ax 7]
+  [:or :ax +boolean-tag+])
+
 (defn compile-expr
   ([x] (compile-expr x (- wordsize) {}))
   ([x si env]
@@ -72,40 +130,13 @@
            (variable? x)
            [[:mov :ax [:bp (env x)]]]
            (primcall? x)
-           (condp = (first x)
+           (if-let [prim (primitives (first x))]
+             (prim si env x)
+             (condp = (first x)
                'let (compile-let (second x) (nth x 2) si env)
                'if (compile-if (second x) (nth x 2) (nth x 3) si env)
-               'write-char (concat (compile-expr (second x) si env)
-                                   [[:mov :ah 0x0e]
-                                    [:int 0x10]])
-               'byte [[:mov :al (second x)]]
-               'inc (concat (compile-expr (second x) si env)
-                            [[:add :ax (immediate-rep 1)]])
-               '+ (concat (compile-expr (third x) si env)
-                          [[:mov [:bp si] :ax]]
-                          (compile-expr (second x) (- si wordsize) env)
-                          [[:add :ax [:bp si]]])
-               '* (concat (compile-expr (third x) si env)
-                          [[:sar :ax 2]
-                           [:mov [:bp si] :ax]]
-                          (compile-expr (second x) (- si wordsize) env)
-                          [[:mul [:bp si]]])
-               '< (concat (compile-expr (third x) si env)
-                          [[:mov [:bp si] :ax]]
-                          (compile-expr (second x) (- si wordsize) env)
-                          [[:xor :bx :bx]
-                           [:cmp :ax [:bp si]]
-                           [:setb :bl]
-                           [:mov :ax :bx]
-                           [:sal :ax 7]
-                           [:or :ax +boolean-tag+]])
-               'nil? (concat (compile-expr (second x) si env)
-                             [[:cmp :ax +nil+]
-                              [:mov :ax 0]
-                              [:sete :al]
-                              [:sal :ax 7]
-                              [:or :ax +boolean-tag+]])
-               'do (apply concat (map #(compile-expr % si env) (rest x)))))))
+               'do (apply concat (map #(compile-expr % si env) (rest x)))
+               (throw (Exception. (format "Unknown primitive: %s" (first x)))))))))
 
 (defn compile-program [x]
   (concat prolog (compile-expr x) epilog))
