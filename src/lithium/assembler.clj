@@ -200,6 +200,9 @@
                 cnt (count assembled)]
             (recur (next prog) (into code assembled) (+ pc cnt) labels)))))))
 
+(defn hexdump [prog]
+  (string/join " " (map #(format "%02x" %) (asm prog))))
+
 (defn assemble-file [prog out]
   (let [assembled (asm (if (string? prog) (read-string (str "[" (slurp prog) "]")) prog))
         byte-arr  (into-array Byte/TYPE (map #(byte (if (>= % 128) (- % 256) %)) assembled))]
