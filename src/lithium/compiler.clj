@@ -2,6 +2,23 @@
   (:require [clojure.string :as string])
   (:use lithium.assembler))
 
+(def primitives {})
+
+(defmacro codeseq [& code]
+  (let [code (partition-by vector? code)]
+    `(concat
+      ~@(apply concat
+               (for [x code]
+                 (if (vector? (first x))
+                   (vector (vec x))
+                   x))))))
+
+(defmacro defprimitive [name args & code]
+  `(def primitives
+     (assoc primitives '~name
+            (fn [~'si ~'env [_# ~@args]]
+              (codeseq ~@code)))))
+
 (defn boolean? [x]
   (or (= x true) (= x false)))
 
@@ -34,9 +51,10 @@
   (let [[code sp env]
         (reduce
          (fn [[code sp env] [v expr]]
-           [(concat code
-                    (compile-expr expr sp env)
-                    [[:mov [:bp sp] :ax]])
+           [(codeseq
+             code
+             (compile-expr expr sp env)
+             [:mov [:bp sp] :ax])
             (- sp wordsize)
             (assoc env v sp)])
          [[] si env]
@@ -52,31 +70,17 @@
 (defn compile-if
   [test-expr then-expr else-expr si env]
   (let [l0 (genkey) l1 (genkey)]
-    (concat
+    (codeseq
      (compile-expr test-expr si env)
-     [[:cmp :ax (immediate-rep false)]]
-     [[:je l0]]
-     [[:cmp :ax (immediate-rep nil)]]
-     [[:je l0]]
+     [:cmp :ax (immediate-rep false)]
+     [:je l0]
+     [:cmp :ax (immediate-rep nil)]
+     [:je l0]
      (compile-expr then-expr si env)
-     [[:jmp l1]]
-     [l0]
+     [:jmp l1]
+     l0
      (compile-expr else-expr si env)
-     [l1])))
-
-(def primitives {})
-
-(defmacro defprimitive [name args & code]
-  (let [code (partition-by vector? code)]
-    `(def primitives
-       (assoc primitives '~name
-              (fn [~'si ~'env [_# ~@args]]
-                (concat
-                 ~@(apply concat
-                          (for [x code]
-                            (if (vector? (first x))
-                              (vector (vec x))
-                              x)))))))))
+     l1)))
 
 (defprimitive + [a b]
   (compile-expr b si env)
