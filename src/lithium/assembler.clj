@@ -96,7 +96,8 @@
       [:jCC label]        [[:cc+ 0x70] :rb]
       [:setCC rm8]        [0x0f [:cc+ 0x90] :2]
       [:loop label]       [0xe2 :rb]
-      [:jmp label]        [0xeb :rb]
+      [:jmp label]        [0xeb :rw]
+      [:call label]       [0xe8 :rw]
       [:int 3]            [0xcc]
       [:int imm8]         [0xcd :ib]])
 
@@ -147,6 +148,9 @@
         (throw (Exception. (format "Incorrect memory reference: %s" rm-desc))))
       (into [(modrm mod spare rm)] (word-to-bytes [(* 8 (if (empty? registers) 2 mod)) displacement])))))
 
+(defn make-label [label width]
+  (keyword (or (namespace label) (name width)) (name label)))
+
 (defn parse-byte [[instr op1 op2] [instr-template op1-template op2-template] byte-desc]
   (let [imm (cond (#{imm8 imm16} op1-template) op1 (#{imm8 imm16} op2-template) op2)
         rm (cond (#{rm8 rm16} op1-template) op1 (#{rm8 rm16} op2-template) op2)
@@ -155,7 +159,8 @@
      (integer? byte-desc) [byte-desc]
      (= byte-desc :ib) (word-to-bytes [8 imm])
      (= byte-desc :iw) (word-to-bytes [16 imm])
-     (= byte-desc :rb) [op1]
+     (= byte-desc :rb) [(make-label op1 :byte)]
+     (= byte-desc :rw) [:placeholder (make-label op1 :word)]     
      (and (keyword? byte-desc) (lenient-parse-int (name byte-desc)))
        (make-modrm rm (lenient-parse-int (name byte-desc)))
      (= byte-desc :r)
@@ -171,16 +176,17 @@
     (let [assembled-parts (map (partial parse-byte instr template) parts)]
       (apply concat assembled-parts))))
 
-(defn unsigned-byte [x]
-  (if (< x 0) (+ x 256) x))
-
 (defn resolve-labels [code labels]
   (loop [result [] code code pos 0]
     (if-let [fb (first code)]
-      (recur (conj result (if (keyword? fb)
-                            (unsigned-byte (dec (- (labels fb) pos)))
-                            fb))
-             (next code) (inc pos))
+      (recur
+       (cond (= fb :placeholder) result
+             (and (keyword? fb) (= (namespace fb) "byte"))
+             (into result (word-to-bytes [8 (dec (- (-> fb name keyword labels) pos))]))
+             (and (keyword? fb) (= (namespace fb) "word"))
+             (into result (word-to-bytes [16 (dec (- (-> fb name keyword labels) pos))]))
+             :otherwise (conj result fb))
+       (next code) (inc pos))
       result)))
 
 (defn asm [prog]
