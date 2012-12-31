@@ -79,6 +79,37 @@
      (compile-expr else-expr si env)
      l1)))
 
+(defn compile-call
+  [si env label args]
+  (codeseq
+   ['sub :sp (* wordsize (inc (count env)))]
+   (map-indexed
+    (fn [i expr]
+      (codeseq
+       (compile-expr expr (- si (* wordsize (inc i))) env)
+       ['push :ax]))
+    args)
+   ['add :sp (* wordsize (inc (count args)))]
+   ['mov :bp :sp]
+   ['call label]))
+
+(defn compile-labels
+  [si env labels code]
+  (let [labels (partition 2 labels)
+        body-label (genkey)]
+    (codeseq
+     ['jmp body-label]
+     (for [[label [code-sym args body]] labels]
+       (codeseq
+        (keyword (name label))
+        ['sub :bp wordsize]
+        (let [arg-env (map-indexed (fn [i x] [x (* (- -1 i) wordsize)]) args)]
+          (compile-expr body (- si (* wordsize (count args))) (into env arg-env)))
+        ['add :bp wordsize]
+        ['ret]))
+     body-label
+     (compile-expr code si env))))
+
 (defprimitive + [a b]
   (compile-expr b si env)
   ['mov [:bp si] :ax]
@@ -137,6 +168,8 @@
                'let (compile-let (second x) (nth x 2) si env)
                'if (compile-if (second x) (nth x 2) (nth x 3) si env)
                'do (apply concat (map #(compile-expr % si env) (rest x)))
+               'labelcall (compile-call si env (keyword (name (second x))) (next (next x)))
+               'labels (compile-labels si env (second x) (nth x 2))
                (throw (Exception. (format "Unknown primitive: %s" (first x)))))))))
 
 (defn compile-program [x]
