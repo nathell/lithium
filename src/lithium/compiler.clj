@@ -174,13 +174,3 @@
 
 (defn compile-program [x]
   (concat prolog (compile-expr x) epilog))
-
-(defn os []
-  (compile-program
-   '(do
-      (write-char (byte 72))
-      (write-char (byte 101))
-      (write-char (byte 108))
-      (write-char (byte 108))
-      (write-char (byte 111))
-      )))
