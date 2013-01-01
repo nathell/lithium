@@ -45,7 +45,7 @@
 (defn reg16 [x] (let [info (+registers+ x)] (and info (= (:type info) :general) (= (:size info) 16))))
 (defn sreg  [x] (let [info (+registers+ x)] (and info (= (:type info) :segment))))
 (defn imm8  [x] (and (integer? x) (<= 0 x 255)))
-(defn imm16 [x] (and (integer? x) (<= 0 x 65535)))
+(defn imm16 [x] (or (and (integer? x) (<= 0 x 65535)) (keyword? x)))
 (defn mem   [x] (vector? x))
 (defn rm8   [x] (or (reg8 x) (mem x)))
 (defn rm16  [x] (or (reg16 x) (mem x)))
@@ -124,12 +124,15 @@
   (first (filter (partial instruction-matches? instr)
                  (partition 2 assembly-table))))
 
+(defn make-label [label width]
+  (keyword (or (namespace label) (name width)) (name label)))
+
 (defn word-to-bytes [[size w]]
-  (let [w (if (neg? w) (+ w (bit-shift-left 1 size)) w)]
+  (let [w (if (and (integer? w) (neg? w)) (+ w (bit-shift-left 1 size)) w)]
     (condp = size
         0 []
         8 [w]
-        16 [(bit-and w 0xff) (bit-shift-right w 8)])))
+        16 (if (keyword? w) [:placeholder (make-label w :abs)] [(bit-and w 0xff) (bit-shift-right w 8)]))))
 
 (defn lenient-parse-int [x]
   (try
@@ -150,9 +153,6 @@
       (when-not rm
         (throw (Exception. (format "Incorrect memory reference: %s" rm-desc))))
       (into [(modrm mod spare rm)] (word-to-bytes [(* 8 (if (empty? registers) 2 mod)) displacement])))))
-
-(defn make-label [label width]
-  (keyword (or (namespace label) (name width)) (name label)))
 
 (defn parse-byte [[instr op1 op2] [instr-template op1-template op2-template] byte-desc]
   (let [imm (cond (#{imm8 imm16} op1-template) op1 (#{imm8 imm16} op2-template) op2)
@@ -179,6 +179,11 @@
     (let [assembled-parts (map (partial parse-byte instr template) parts)]
       (apply concat assembled-parts))))
 
+;; This is the value added to absolute addresses of labels, telling
+;; the assembler where the code starts from. Defaults to 0x100 for
+;; compatibility with COM format.
+(def *origin* 0x100)
+
 (defn resolve-labels [code labels]
   (loop [result [] code code pos 0]
     (if-let [fb (first code)]
@@ -188,6 +193,8 @@
              (into result (word-to-bytes [8 (dec (- (-> fb name keyword labels) pos))]))
              (and (keyword? fb) (= (namespace fb) "word"))
              (into result (word-to-bytes [16 (dec (- (-> fb name keyword labels) pos))]))
+             (and (keyword? fb) (= (namespace fb) "abs"))
+             (into result (word-to-bytes [16 (+ *origin* (-> fb name keyword labels))]))
              :otherwise (conj result fb))
        (next code) (inc pos))
       result)))
