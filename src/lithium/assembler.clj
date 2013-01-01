@@ -127,6 +127,10 @@
 (defn make-label [label width]
   (keyword (or (namespace label) (name width)) (name label)))
 
+(defn label?
+  ([x] (keyword? x))
+  ([x type] (and (keyword? x) (= (namespace x) (name type)))))
+
 (defn word-to-bytes [[size w]]
   (let [w (if (and (integer? w) (neg? w)) (+ w (bit-shift-left 1 size)) w)]
     (condp = size
@@ -189,13 +193,10 @@
     (if-let [fb (first code)]
       (recur
        (cond (= fb :placeholder) result
-             (and (keyword? fb) (= (namespace fb) "byte"))
-             (into result (word-to-bytes [8 (dec (- (-> fb name keyword labels) pos))]))
-             (and (keyword? fb) (= (namespace fb) "word"))
-             (into result (word-to-bytes [16 (dec (- (-> fb name keyword labels) pos))]))
-             (and (keyword? fb) (= (namespace fb) "abs"))
-             (into result (word-to-bytes [16 (+ *origin* (-> fb name keyword labels))]))
-             :otherwise (conj result fb))
+             (label? fb :byte)   (into result (word-to-bytes [8 (dec (- (-> fb name keyword labels) pos))]))
+             (label? fb :word)   (into result (word-to-bytes [16 (dec (- (-> fb name keyword labels) pos))]))
+             (label? fb :abs)    (into result (word-to-bytes [16 (+ *origin* (-> fb name keyword labels))]))
+             :otherwise          (conj result fb))
        (next code) (inc pos))
       result)))
 
