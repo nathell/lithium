@@ -33,8 +33,11 @@
 (defn immediate? [x]
   (immediate-rep x))
 
-(def prolog [['mov :bp :sp]])
-(def epilog [:forever ['jmp :forever]])
+(def prolog [['mov :bp :sp]
+             ['mov :si :heap-start]
+             ['add :si 7]
+             ['and :si 0xfff8]])
+(def epilog [:forever ['jmp :forever] :heap-start])
 
 (defn primcall? [x]
   (list? x))
