@@ -21,6 +21,7 @@
 
 (def +nil+ 2r00101111)
 (def +boolean-tag+ 2r0011111)
+(def +cons-tag+ 2r001)
 (def wordsize 2)
 
 (defn immediate-rep [x]
@@ -156,6 +157,25 @@
   ['sete :al]
   ['sal :ax 7]
   ['or :ax +boolean-tag+])
+
+(defprimitive cons [x y]
+  (compile-expr x si env)
+  ['mov [:si] :ax]
+  (compile-expr y si env)
+  ['mov [:si wordsize] :ax]
+  ['mov :ax :si]
+  ['or :ax +cons-tag+]
+  ['add :si 8])
+
+(defprimitive car [x]
+  (compile-expr x si env)
+  ['mov :bx :ax]
+  ['mov :ax [:bx -1]])
+
+(defprimitive cdr [x]
+  (compile-expr x si env)
+  ['mov :bx :ax]
+  ['mov :ax [:bx (dec wordsize)]])
 
 (defn compile-expr
   ([x] (compile-expr x (- wordsize) {}))
