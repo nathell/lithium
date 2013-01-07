@@ -193,7 +193,7 @@
 ;; This is the value added to absolute addresses of labels, telling
 ;; the assembler where the code starts from. Defaults to 0x100 for
 ;; compatibility with COM format.
-(def *origin* 0x100)
+(def ^:dynamic *origin* 0x100)
 
 (defn resolve-labels [code labels]
   (loop [result [] code code pos 0]
