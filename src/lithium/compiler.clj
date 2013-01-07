@@ -22,6 +22,7 @@
 (def +nil+ 2r00101111)
 (def +boolean-tag+ 2r0011111)
 (def +cons-tag+ 2r001)
+(def +closure-tag+ 2r110)
 (def wordsize 2)
 
 (defn immediate-rep [x]
@@ -47,6 +48,10 @@
 
 (declare compile-expr)
 
+(defn make-environment-element
+  [symbol type offset]
+  [symbol {:type type, :offset offset}])
+
 (defn compile-let
   [bindings body si env]
   (let [[code sp env]
@@ -56,8 +61,8 @@
              code
              (compile-expr expr sp env)
              ['mov [:bp sp] :ax])
-            (- sp wordsize)
-            (assoc env v sp)])
+            (- sp 2)
+            (conj env (make-environment-element v :bound sp))])
          [[] si env]
          (partition 2 bindings))]
     (concat code (compile-expr body sp env))))
@@ -84,18 +89,25 @@
      l1)))
 
 (defn compile-call
-  [si env label args]
+  [si env expr args]
   (codeseq
-   ['sub :sp (* wordsize (inc (count env)))]
+   ['sub :sp (* wordsize (+ 2 (count env)))]
    (map-indexed
     (fn [i expr]
       (codeseq
        (compile-expr expr (- si (* wordsize (inc i))) env)
        ['push :ax]))
     args)
-   ['add :sp (* wordsize (inc (count args)))]
+   (compile-expr expr (- si (* wordsize (inc (count args)))) env)
+   ['add :sp (* wordsize (+ 2 (count args)))]
+   ['push :di]
+   ['mov :di :ax]
+   ['mov :bx :ax]
    ['mov :bp :sp]
-   ['call label]))
+   ['call [:bx (- +closure-tag+)]]
+   ['pop :di]
+   ['add :sp (* wordsize (count env))]
+   ['mov :bp :sp]))
 
 (defn compile-labels
   [si env labels code]
@@ -103,12 +115,16 @@
         body-label (genkey)]
     (codeseq
      ['jmp body-label]
-     (for [[label [code-sym args body]] labels]
+     (for [[label [code-sym args fvars body]] labels]
        (codeseq
         (keyword (name label))
         ['sub :bp wordsize]
-        (let [arg-env (map-indexed (fn [i x] [x (* (- -1 i) wordsize)]) args)]
-          (compile-expr body (- si (* wordsize (count args))) (into env arg-env)))
+        (let [arg-env (map-indexed (fn [i x]
+                                     (make-environment-element x :bound (- -2 i i))
+                                     #_[x (* (- -1 i) wordsize)]) args)
+              fvar-env (map-indexed (fn [i x]
+                                      (make-environment-element x :free (+ 2 i i))) fvars)]
+          (compile-expr body (- si (* wordsize (count args))) (into env (concat arg-env fvar-env))))
         ['add :bp wordsize]
         ['ret]))
      body-label
@@ -177,13 +193,30 @@
   ['mov :bx :ax]
   ['mov :ax [:bx (dec wordsize)]])
 
+(defprimitive closure [label free-vars]
+  ['mov [:si] (-> label name keyword)]
+  ['add :si wordsize]
+  (for [fvar free-vars]
+    [(compile-expr fvar si env)
+     ['mov [:si] :ax]
+     ['add :si wordsize]])
+  ['mov :ax :si]
+  ['sub :ax (* wordsize (inc (count free-vars)))]
+  ['or :ax +closure-tag+]
+  ['add :si 7]
+  ['and :si 0xfff8])
+
 (defn compile-expr
   ([x] (compile-expr x (- wordsize) {}))
   ([x si env]
      (cond (immediate? x)
            [['mov :ax (immediate-rep x)]]
            (variable? x)
-           [['mov :ax [:bp (env x)]]]
+           (let [{:keys [type offset]} (env x)]
+             (if (= type :bound)
+               [['mov :ax [:bp offset]]]
+               [['mov :bx :di]
+                ['mov :ax [:bx (- offset +closure-tag+)]]]))
            (primcall? x)
            (if-let [prim (primitives (first x))]
              (prim si env x)
@@ -191,7 +224,7 @@
                'let (compile-let (second x) (nth x 2) si env)
                'if (compile-if (second x) (nth x 2) (nth x 3) si env)
                'do (apply concat (map #(compile-expr % si env) (rest x)))
-               'labelcall (compile-call si env (keyword (name (second x))) (next (next x)))
+               'fncall (compile-call si env (second x) (next (next x)))
                'labels (compile-labels si env (second x) (nth x 2))
                (throw (Exception. (format "Unknown primitive: %s" (first x)))))))))
 
