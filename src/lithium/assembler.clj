@@ -59,6 +59,8 @@
       [:mov reg8 imm8]    [[:r+ 0xb0] :ib]
       [:mov reg16 imm16]  [[:r+ 0xb8] :iw]
       [:mov sreg rm16]    [0x8e :r]
+      [:mov rm8 imm8]     [0xc6 :0 :ib]
+      [:mov rm16 imm16]   [0xc7 :0 :iw]
       [:xor rm8 reg8]     [0x30 :r]
       [:xor rm16 reg16]   [0x31 :r]
       [:push reg16]       [[:r+ 0x50]]
@@ -102,7 +104,9 @@
       [:jCC label]        [[:cc+ 0x70] :rb]
       [:setCC rm8]        [0x0f [:cc+ 0x90] :2]
       [:loop label]       [0xe2 :rb]
+      [:jmp rm16]         [0xff :4]
       [:jmp label]        [0xe9 :rw]
+      [:call rm16]        [0xff :2]
       [:call label]       [0xe8 :rw]
       [:int 3]            [0xcc]
       [:int imm8]         [0xcd :ib]])
