@@ -42,7 +42,7 @@
 (def epilog [:forever ['jmp :forever] :heap-start])
 
 (defn primcall? [x]
-  (list? x))
+  (or (list? x) (seq? x)))
 
 (defn third [x] (nth x 2))
 
@@ -228,5 +228,48 @@
                'labels (compile-labels si env (second x) (nth x 2))
                (throw (Exception. (format "Unknown primitive: %s" (first x)))))))))
 
+(defn collect-closures
+  [bound-vars expr]
+  (cond
+   (not (primcall? expr))
+   [[] expr]
+   
+   (= (first expr) 'let)
+   (let [[bound-vars binding-closures bindings]
+         (reduce (fn [[bound-vars closures bindings] [sym val-expr]]
+                   (let [[new-closures new-val-expr] (collect-closures bound-vars val-expr)]
+                     [(conj bound-vars sym) (into closures new-closures) (conj bindings sym new-val-expr)]))
+                 [bound-vars [] []]
+                 (partition 2 (second expr)))
+         transformed-body (map (partial collect-closures bound-vars) (next (next expr)))
+         body-closures (apply concat (map first transformed-body))
+         new-body (map second transformed-body)]
+     [(into binding-closures body-closures)
+      `(~'let ~(vec bindings) ~@new-body)])
+
+   (or (#{'if 'do} (first expr)) (primitives (first expr)))
+   (let [transformed-body (map (partial collect-closures bound-vars) (next expr))]
+     [(apply concat (map first transformed-body))
+      `(~(first expr) ~@(map second transformed-body))])
+
+   (= (first expr) 'fn)
+   (let [body-bound-vars (into bound-vars (second expr))
+         transformed-body (map (partial collect-closures body-bound-vars) (next (next expr)))
+         sym (gensym "cl")]
+     [(conj (vec (apply concat (map first transformed-body)))
+            `(~sym (~'code ~(second expr) ~(vec bound-vars) ~@(map second transformed-body))))
+      `(~'closure ~sym ~(vec bound-vars))])
+
+   :otherwise
+   (let [transformed-fn (collect-closures bound-vars (first expr))
+         transformed-body (map (partial collect-closures bound-vars) (next expr))]
+     [(apply concat (first transformed-fn) (map first transformed-body))
+      `(~'fncall ~(second transformed-fn) ~@(map second transformed-body))])))
+
+(defn clojure->tcr
+  [prog]
+  (let [[closures expr] (collect-closures #{} prog)]
+    `(~'labels ~(vec (apply concat closures)) ~expr)))
+
 (defn compile-program [x]
-  (concat prolog (compile-expr x) epilog))
+  (concat prolog (compile-expr (clojure->tcr x)) epilog))
