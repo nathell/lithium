@@ -13,7 +13,7 @@
 (defmacro defprimitive [name args & code]
   `(def primitives
      (assoc primitives '~name
-            (fn [~'si ~'env [_# ~@args]]
+            (fn [~'si ~'env ~'rp [_# ~@args]]
               (codeseq ~@code)))))
 
 (defn boolean? [x]
@@ -53,19 +53,19 @@
   [symbol {:type type, :offset offset}])
 
 (defn compile-let
-  [bindings body si env]
+  [bindings body si env loop? rp]
   (let [[code sp env]
         (reduce
          (fn [[code sp env] [v expr]]
            [(codeseq
              code
-             (compile-expr expr sp env)
+             (compile-expr expr sp env rp)
              ['mov [:bp sp] :ax])
             (- sp 2)
             (conj env (make-environment-element v :bound sp))])
          [[] si env]
          (partition 2 bindings))]
-    (concat code (compile-expr body sp env))))
+    (concat code (when loop? [rp]) (compile-expr body sp env rp))))
 
 (defn variable? [x]
   (symbol? x))
@@ -74,31 +74,31 @@
   (-> (gensym) name string/lower-case keyword))
 
 (defn compile-if
-  [test-expr then-expr else-expr si env]
+  [test-expr then-expr else-expr si env rp]
   (let [l0 (genkey) l1 (genkey)]
     (codeseq
-     (compile-expr test-expr si env)
+     (compile-expr test-expr si env rp)
      ['cmp :ax (immediate-rep false)]
      ['je l0]
      ['cmp :ax (immediate-rep nil)]
      ['je l0]
-     (compile-expr then-expr si env)
+     (compile-expr then-expr si env rp)
      ['jmp l1]
      l0
-     (compile-expr else-expr si env)
+     (compile-expr else-expr si env rp)
      l1)))
 
 (defn compile-call
-  [si env expr args]
+  [si env expr args rp]
   (codeseq
    ['sub :sp (* wordsize (+ 2 (count env)))]
    (map-indexed
     (fn [i expr]
       (codeseq
-       (compile-expr expr (- si (* wordsize (inc i))) env)
+       (compile-expr expr (- si (* wordsize (inc i))) env rp)
        ['push :ax]))
     args)
-   (compile-expr expr (- si (* wordsize (inc (count args)))) env)
+   (compile-expr expr (- si (* wordsize (inc (count args)))) env rp)
    ['add :sp (* wordsize (+ 2 (count args)))]
    ['push :di]
    ['mov :di :ax]
@@ -110,7 +110,7 @@
    ['mov :bp :sp]))
 
 (defn compile-labels
-  [si env labels code]
+  [si env labels code rp]
   (let [labels (partition 2 labels)
         body-label (genkey)]
     (codeseq
@@ -124,29 +124,29 @@
                                      #_[x (* (- -1 i) wordsize)]) args)
               fvar-env (map-indexed (fn [i x]
                                       (make-environment-element x :free (+ 2 i i))) fvars)]
-          (compile-expr body (- si (* wordsize (count args))) (into env (concat arg-env fvar-env))))
+          (compile-expr body (- si (* wordsize (count args))) (into env (concat arg-env fvar-env)) rp))
         ['add :bp wordsize]
         ['ret]))
      body-label
-     (compile-expr code si env))))
+     (compile-expr code si env rp))))
 
 (defprimitive + [a b]
-  (compile-expr b si env)
+  (compile-expr b si env rp)
   ['mov [:bp si] :ax]
-  (compile-expr a (- si wordsize) env)
+  (compile-expr a (- si wordsize) env rp)
   ['add :ax [:bp si]])
 
 (defprimitive * [a b]
-  (compile-expr b si env)
+  (compile-expr b si env rp)
   ['sar :ax 2]
   ['mov [:bp si] :ax]
-  (compile-expr a (- si wordsize) env)
+  (compile-expr a (- si wordsize) env rp)
   ['mul [:bp si]])
 
 (defprimitive < [a b]
-  (compile-expr b si env)
+  (compile-expr b si env rp)
   ['mov [:bp si] :ax]
-  (compile-expr a (- si wordsize) env)
+  (compile-expr a (- si wordsize) env rp)
   ['xor :bx :bx]
   ['cmp :ax [:bp si]]
   ['setb :bl]
@@ -155,7 +155,7 @@
   ['or :ax +boolean-tag+])
 
 (defprimitive write-char [x]
-  (compile-expr x si env)
+  (compile-expr x si env rp)
   ['mov :ah 0x0e]
   ['int 0x10])
 
@@ -163,11 +163,11 @@
   ['mov :al x])
 
 (defprimitive inc [x]
-  (compile-expr x si env)
+  (compile-expr x si env rp)
   ['add :ax (immediate-rep 1)])
 
 (defprimitive nil? [x]
-  (compile-expr (second x) si env)
+  (compile-expr (second x) si env rp)
   ['cmp :ax +nil+]
   ['mov :ax 0]
   ['sete :al]
@@ -175,21 +175,30 @@
   ['or :ax +boolean-tag+])
 
 (defprimitive cons [x y]
-  (compile-expr x si env)
+  (compile-expr x si env rp)
   ['mov [:si] :ax]
-  (compile-expr y si env)
+  (compile-expr y si env rp)
   ['mov [:si wordsize] :ax]
   ['mov :ax :si]
   ['or :ax +cons-tag+]
   ['add :si 8])
 
 (defprimitive car [x]
-  (compile-expr x si env)
+  (compile-expr x si env rp)
   ['mov :bx :ax]
   ['mov :ax [:bx -1]])
 
+(defprimitive recur [& exprs]
+  (for [[i expr] (map-indexed vector exprs)]
+    [(compile-expr expr (- si (* i wordsize)) env rp)
+     ['mov [:bp (- si (* i wordsize))] :ax]])
+  (for [i (range (count exprs))]
+    [['mov :bx [:bp (- si (* i wordsize))]]
+     ['mov [:bp (- (* (inc i) wordsize))] :bx]])
+  ['jmp rp])
+
 (defprimitive cdr [x]
-  (compile-expr x si env)
+  (compile-expr x si env rp)
   ['mov :bx :ax]
   ['mov :ax [:bx (dec wordsize)]])
 
@@ -197,7 +206,7 @@
   ['mov [:si] (-> label name keyword)]
   ['add :si wordsize]
   (for [fvar free-vars]
-    [(compile-expr fvar si env)
+    [(compile-expr fvar si env rp)
      ['mov [:si] :ax]
      ['add :si wordsize]])
   ['mov :ax :si]
@@ -207,8 +216,8 @@
   ['and :si 0xfff8])
 
 (defn compile-expr
-  ([x] (compile-expr x (- wordsize) {}))
-  ([x si env]
+  ([x] (compile-expr x (- wordsize) {} nil))
+  ([x si env rp]
      (cond (immediate? x)
            [['mov :ax (immediate-rep x)]]
            (variable? x)
@@ -219,13 +228,14 @@
                 ['mov :ax [:bx (- offset +closure-tag+)]]]))
            (primcall? x)
            (if-let [prim (primitives (first x))]
-             (prim si env x)
+             (prim si env rp x)
              (condp = (first x)
-               'let (compile-let (second x) (nth x 2) si env)
-               'if (compile-if (second x) (nth x 2) (nth x 3) si env)
-               'do (apply concat (map #(compile-expr % si env) (rest x)))
-               'fncall (compile-call si env (second x) (next (next x)))
-               'labels (compile-labels si env (second x) (nth x 2))
+               'let (compile-let (second x) (nth x 2) si env false rp)
+               'loop (compile-let (second x) (nth x 2) si env true (genkey))
+               'if (compile-if (second x) (nth x 2) (nth x 3) si env rp)
+               'do (apply concat (map #(compile-expr % si env rp) (rest x)))
+               'fncall (compile-call si env (second x) (next (next x)) rp)
+               'labels (compile-labels si env (second x) (nth x 2) rp)
                (throw (Exception. (format "Unknown primitive: %s" (first x)))))))))
 
 (defn collect-closures
@@ -234,7 +244,7 @@
    (not (primcall? expr))
    [[] expr]
    
-   (= (first expr) 'let)
+   (#{'let 'loop} (first expr))
    (let [[bound-vars binding-closures bindings]
          (reduce (fn [[bound-vars closures bindings] [sym val-expr]]
                    (let [[new-closures new-val-expr] (collect-closures bound-vars val-expr)]
@@ -245,9 +255,9 @@
          body-closures (apply concat (map first transformed-body))
          new-body (map second transformed-body)]
      [(into binding-closures body-closures)
-      `(~'let ~(vec bindings) ~@new-body)])
+      `(~(first expr) ~(vec bindings) ~@new-body)])
 
-   (or (#{'if 'do} (first expr)) (primitives (first expr)))
+   (or (#{'if 'do 'recur} (first expr)) (primitives (first expr)))
    (let [transformed-body (map (partial collect-closures bound-vars) (next expr))]
      [(apply concat (map first transformed-body))
       `(~(first expr) ~@(map second transformed-body))])
