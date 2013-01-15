@@ -65,7 +65,8 @@
             (conj env (make-environment-element v :bound sp))])
          [[] si env]
          (partition 2 bindings))]
-    (concat code (when loop? [rp]) (compile-expr body sp env rp))))
+    (concat code (when loop? [rp])
+            (map #(compile-expr % sp env rp) body))))
 
 (defn variable? [x]
   (symbol? x))
@@ -230,8 +231,8 @@
            (if-let [prim (primitives (first x))]
              (prim si env rp x)
              (condp = (first x)
-               'let (compile-let (second x) (nth x 2) si env false rp)
-               'loop (compile-let (second x) (nth x 2) si env true (genkey))
+               'let (compile-let (second x) (next (next x)) si env false rp)
+               'loop (compile-let (second x) (next (next x)) si env true (genkey))
                'if (compile-if (second x) (nth x 2) (nth x 3) si env rp)
                'do (apply concat (map #(compile-expr % si env rp) (rest x)))
                'fncall (compile-call si env (second x) (next (next x)) rp)
