@@ -138,12 +138,42 @@
   (compile-expr a (- si wordsize) env rp)
   ['add :ax [:bp si]])
 
+(defprimitive - [a b]
+  (compile-expr b si env rp)
+  ['mov [:bp si] :ax]
+  (compile-expr a (- si wordsize) env rp)
+  ['sub :ax [:bp si]])
+
 (defprimitive * [a b]
   (compile-expr b si env rp)
   ['sar :ax 2]
   ['mov [:bp si] :ax]
   (compile-expr a (- si wordsize) env rp)
   ['mul [:bp si]])
+
+(defprimitive mod [a b]
+  (compile-expr b si env rp)
+  ['sar :ax 2]
+  ['mov [:bp si] :ax]
+  (compile-expr a (- si wordsize) env rp)
+  ['mov :dx 0]
+  ['sar :ax 2]
+  ['div [:bp si]]
+  ['mov :ax :dx]
+  ['sal :ax 2])
+
+(defprimitive = [a b]
+  (compile-expr b si env rp)
+  ['mov [:bp si] :ax]
+  (compile-expr a (- si wordsize) env rp)
+  ['cmp :ax [:bp si]]
+  (let [l1 (genkey) l2 (genkey)]
+    [['jne l1]
+     ['mov :ax (immediate-rep true)]
+     ['jmp l2]
+     l1
+     ['mov :ax (immediate-rep false)]
+     l2]))
 
 (defprimitive < [a b]
   (compile-expr b si env rp)
@@ -198,6 +228,27 @@
     [['mov :bx [:bp (- si (* i wordsize))]]
      ['mov [:bp (- (* (inc i) wordsize))] :bx]])
   ['jmp rp])
+
+(defprimitive init-graph []
+  ['mov :ax 0x13]
+  ['int 0x10]
+  ['mov :ax 0xa000]
+  ['mov :es :ax])
+
+(defprimitive put-pixel [x y c]
+  ['mov :cx :di]
+  (compile-expr y si env rp)
+  ['sal :ax 4]
+  ['mov :di :ax]
+  ['sal :ax 2]
+  ['add :di :ax]
+  (compile-expr x si env rp)
+  ['sar :ax 2]
+  ['add :di :ax]
+  (compile-expr c si env rp)
+  ['sar :ax 2]
+  ['stosb]
+  ['mov :di :cx])
 
 (defprimitive cdr [x]
   (compile-expr x si env rp)
