@@ -35,7 +35,8 @@
 (defn immediate? [x]
   (immediate-rep x))
 
-(def prolog [['mov :bp :sp]
+(def prolog [['cli]
+             ['mov :bp :sp]
              ['mov :si :heap-start]
              ['add :si 7]
              ['and :si 0xfff8]])
