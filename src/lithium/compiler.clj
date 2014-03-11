@@ -1,6 +1,6 @@
 (ns lithium.compiler
   (:require [clojure.string :as string])
-  (:use [lithium.utils :only [update]]))
+  (:use [lithium.utils :only [read-all update]]))
 
 (def primitives {})
 
@@ -273,17 +273,30 @@
   ['and :si 0xfff8])
 
 (def initial-compilation-state
-  {:stack-pointer (- wordsize)
+  {:code []
+   :stack-pointer (- wordsize)
    :environment {}
    :recur-point nil})
 
 (defn compile-var-access
   [symbol environment]
   (let [{:keys [type offset]} (environment symbol)]
-    (if (= type :bound)
-      [['mov :ax [:bp offset]]]
-      [['mov :bx :di]
-       ['mov :ax [:bx (- offset +closure-tag+)]]])))
+    (condp = type
+      :bound [['mov :ax [:bp offset]]]
+      :free  [['mov :bx :di]
+              ['mov :ax [:bx (- offset +closure-tag+)]]]
+      :var   [['mov :ax [offset]]]
+      (throw (Exception. (str "Unbound variable: " symbol))))))
+
+(defn compile-def 
+  [symbol expr {:keys [stack-pointer environment] :as state}]
+  (let [address (+ 0x10000 stack-pointer)]
+    {:code (codeseq
+            (:code state)
+            (compile-expr expr state)
+            ['mov [address] :ax]),
+     :environment (conj environment (make-environment-element symbol :var address)),
+     :stack-pointer (- stack-pointer wordsize)}))
 
 (defn compile-expr
   ([x] (compile-expr x initial-compilation-state))
@@ -302,6 +315,7 @@
                'do (apply concat (map #(compile-expr % state) (rest x)))
                'fncall (compile-call (second x) (next (next x)) state)
                'labels (compile-labels (second x) (nth x 2) state)
+               'def (compile-def (second x) (nth x 2) state)
                (throw (Exception. (format "Unknown primitive: %s" (first x)))))))))
 
 (defn collect-closures
@@ -336,6 +350,10 @@
             `(~sym (~'code ~(second expr) ~(vec bound-vars) ~@(map second transformed-body))))
       `(~'closure ~sym ~(vec bound-vars))])
 
+   (= (first expr) 'def)
+   (let [[closures new-expr] (collect-closures bound-vars (nth expr 2))]
+     [closures `(~'def ~(second expr) ~new-expr)])
+
    :otherwise
    (let [transformed-fn (collect-closures bound-vars (first expr))
          transformed-body (map (partial collect-closures bound-vars) (next expr))]
@@ -345,7 +363,29 @@
 (defn clojure->tcr
   [prog]
   (let [[closures expr] (collect-closures #{} prog)]
-    `(~'labels ~(vec (apply concat closures)) ~expr)))
+    (if (seq closures)
+      (if (= (first expr) 'def)
+        `(~'def ~(second expr) (~'labels ~(vec (apply concat closures)) ~(nth expr 2)))
+        `(~'labels ~(vec (apply concat closures)) ~expr))
+      expr)))
 
-(defn compile-program [x]
-  (concat prolog (compile-expr (clojure->tcr x)) epilog))
+(defn compile-program*
+  [sexps]
+  (reduce
+   (fn [{:keys [code env stack-start] :as state} sexp]
+     (let [res (compile-expr (clojure->tcr sexp) state)]
+       (if (map? res)
+         (into state res)
+         (update state :code (concat res)))))
+   initial-compilation-state
+   sexps))
+
+(defn compile-program 
+  [sexps]
+  (concat prolog
+          (:code (compile-program* sexps))
+          epilog))
+
+(defn compile-file
+  [f]
+  (compile-program (read-all f)))
