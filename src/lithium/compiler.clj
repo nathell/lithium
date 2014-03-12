@@ -1,6 +1,6 @@
 (ns lithium.compiler
   (:require [clojure.string :as string])
-  (:use lithium.assembler))
+  (:use [lithium.utils :only [update]]))
 
 (def primitives {})
 
@@ -13,7 +13,7 @@
 (defmacro defprimitive [name args & code]
   `(def primitives
      (assoc primitives '~name
-            (fn [~'si ~'env ~'rp [_# ~@args]]
+            (fn [~'state [_# ~@args]]
               (codeseq ~@code)))))
 
 (defn boolean? [x]
@@ -54,20 +54,22 @@
   [symbol {:type type, :offset offset}])
 
 (defn compile-let
-  [bindings body si env loop? rp]
-  (let [[code sp env]
+  [bindings body loop? state]
+  (let [[code state]
         (reduce
-         (fn [[code sp env] [v expr]]
+         (fn [[code {:keys [stack-pointer environment] :as state}] [v expr]]
            [(codeseq
              code
-             (compile-expr expr sp env rp)
-             ['mov [:bp sp] :ax])
-            (- sp 2)
-            (conj env (make-environment-element v :bound sp))])
-         [[] si env]
+             (compile-expr expr state)
+             ['mov [:bp stack-pointer] :ax])
+            (update state
+                    :stack-pointer (- 2)
+                    :environment (conj (make-environment-element v :bound stack-pointer)))])
+         [[] state]
          (partition 2 bindings))]
-    (concat code (when loop? [rp])
-            (map #(compile-expr % sp env rp) body))))
+    (concat code 
+            (when loop? [(:recur-point state)])
+            (mapcat #(compile-expr % state) body))))
 
 (defn variable? [x]
   (symbol? x))
@@ -76,31 +78,31 @@
   (-> (gensym) name string/lower-case keyword))
 
 (defn compile-if
-  [test-expr then-expr else-expr si env rp]
+  [test-expr then-expr else-expr state]
   (let [l0 (genkey) l1 (genkey)]
     (codeseq
-     (compile-expr test-expr si env rp)
+     (compile-expr test-expr state)
      ['cmp :ax (immediate-rep false)]
      ['je l0]
      ['cmp :ax (immediate-rep nil)]
      ['je l0]
-     (compile-expr then-expr si env rp)
+     (compile-expr then-expr state)
      ['jmp l1]
      l0
-     (compile-expr else-expr si env rp)
+     (compile-expr else-expr state)
      l1)))
 
 (defn compile-call
-  [si env expr args rp]
+  [expr args {:keys [environment] :as state}]
   (codeseq
-   ['sub :sp (* wordsize (+ 2 (count env)))]
+   ['sub :sp (* wordsize (+ 2 (count environment)))]
    (map-indexed
     (fn [i expr]
       (codeseq
-       (compile-expr expr (- si (* wordsize (inc i))) env rp)
+       (compile-expr expr (update state :stack-pointer (- (* wordsize (inc i)))))
        ['push :ax]))
     args)
-   (compile-expr expr (- si (* wordsize (inc (count args)))) env rp)
+   (compile-expr expr (update state :stack-pointer (- (* wordsize (inc (count args))))))
    ['add :sp (* wordsize (+ 2 (count args)))]
    ['push :di]
    ['mov :di :ax]
@@ -108,11 +110,11 @@
    ['mov :bp :sp]
    ['call [:bx (- +closure-tag+)]]
    ['pop :di]
-   ['add :sp (* wordsize (count env))]
+   ['add :sp (* wordsize (count environment))]
    ['mov :bp :sp]))
 
 (defn compile-labels
-  [si env labels code rp]
+  [labels code state]
   (let [labels (partition 2 labels)
         body-label (genkey)]
     (codeseq
@@ -122,51 +124,53 @@
         (keyword (name label))
         ['sub :bp wordsize]
         (let [arg-env (map-indexed (fn [i x]
-                                     (make-environment-element x :bound (- -2 i i))
-                                     #_[x (* (- -1 i) wordsize)]) args)
+                                     (make-environment-element x :bound (- -2 i i))) args)
               fvar-env (map-indexed (fn [i x]
                                       (make-environment-element x :free (+ 2 i i))) fvars)]
-          (compile-expr body (- si (* wordsize (count args))) (into env (concat arg-env fvar-env)) rp))
+          (compile-expr body 
+                        (update state
+                                :stack-pointer (- (* wordsize (count args)))
+                                :environment (into (concat arg-env fvar-env)))))
         ['add :bp wordsize]
         ['ret]))
      body-label
-     (compile-expr code si env rp))))
+     (compile-expr code state))))
 
 (defprimitive + [a b]
-  (compile-expr b si env rp)
-  ['mov [:bp si] :ax]
-  (compile-expr a (- si wordsize) env rp)
-  ['add :ax [:bp si]])
+  (compile-expr b state)
+  ['mov [:bp (:stack-pointer state)] :ax]
+  (compile-expr a (update state :stack-pointer (- wordsize)))
+  ['add :ax [:bp (:stack-pointer state)]])
 
 (defprimitive - [a b]
-  (compile-expr b si env rp)
-  ['mov [:bp si] :ax]
-  (compile-expr a (- si wordsize) env rp)
-  ['sub :ax [:bp si]])
+  (compile-expr b state)
+  ['mov [:bp (:stack-pointer state)] :ax]
+  (compile-expr a (update state :stack-pointer (- wordsize)))
+  ['sub :ax [:bp (:stack-pointer state)]])
 
 (defprimitive * [a b]
-  (compile-expr b si env rp)
+  (compile-expr b state)
   ['sar :ax 2]
-  ['mov [:bp si] :ax]
-  (compile-expr a (- si wordsize) env rp)
-  ['mul [:bp si]])
+  ['mov [:bp (:stack-pointer state)] :ax]
+  (compile-expr a (update state :stack-pointer (- wordsize)))
+  ['mul [:bp (:stack-pointer state)]])
 
 (defprimitive mod [a b]
-  (compile-expr b si env rp)
+  (compile-expr b state)
   ['sar :ax 2]
-  ['mov [:bp si] :ax]
-  (compile-expr a (- si wordsize) env rp)
+  ['mov [:bp (:stack-pointer state)] :ax]
+  (compile-expr a (update state :stack-pointer (- wordsize)))
   ['mov :dx 0]
   ['sar :ax 2]
-  ['div [:bp si]]
+  ['div [:bp (:stack-pointer state)]]
   ['mov :ax :dx]
   ['sal :ax 2])
 
 (defprimitive = [a b]
-  (compile-expr b si env rp)
-  ['mov [:bp si] :ax]
-  (compile-expr a (- si wordsize) env rp)
-  ['cmp :ax [:bp si]]
+  (compile-expr b state)
+  ['mov [:bp (:stack-pointer state)] :ax]
+  (compile-expr a (update state :stack-pointer (- wordsize)))
+  ['cmp :ax [:bp (:stack-pointer state)]]
   (let [l1 (genkey) l2 (genkey)]
     [['jne l1]
      ['mov :ax (immediate-rep true)]
@@ -176,18 +180,18 @@
      l2]))
 
 (defprimitive < [a b]
-  (compile-expr b si env rp)
-  ['mov [:bp si] :ax]
-  (compile-expr a (- si wordsize) env rp)
+  (compile-expr b state)
+  ['mov [:bp (:stack-pointer state)] :ax]
+  (compile-expr a (update state :stack-pointer (- wordsize)))
   ['xor :bx :bx]
-  ['cmp :ax [:bp si]]
+  ['cmp :ax [:bp (:stack-pointer state)]]
   ['setb :bl]
   ['mov :ax :bx]
   ['sal :ax 7]
   ['or :ax +boolean-tag+])
 
 (defprimitive write-char [x]
-  (compile-expr x si env rp)
+  (compile-expr x state)
   ['mov :ah 0x0e]
   ['int 0x10])
 
@@ -195,11 +199,11 @@
   ['mov :al x])
 
 (defprimitive inc [x]
-  (compile-expr x si env rp)
+  (compile-expr x state)
   ['add :ax (immediate-rep 1)])
 
 (defprimitive nil? [x]
-  (compile-expr (second x) si env rp)
+  (compile-expr (second x) state)
   ['cmp :ax +nil+]
   ['mov :ax 0]
   ['sete :al]
@@ -207,27 +211,27 @@
   ['or :ax +boolean-tag+])
 
 (defprimitive cons [x y]
-  (compile-expr x si env rp)
+  (compile-expr x state)
   ['mov [:si] :ax]
-  (compile-expr y si env rp)
+  (compile-expr y state)
   ['mov [:si wordsize] :ax]
   ['mov :ax :si]
   ['or :ax +cons-tag+]
   ['add :si 8])
 
 (defprimitive car [x]
-  (compile-expr x si env rp)
+  (compile-expr x state)
   ['mov :bx :ax]
   ['mov :ax [:bx -1]])
 
 (defprimitive recur [& exprs]
   (for [[i expr] (map-indexed vector exprs)]
-    [(compile-expr expr (- si (* i wordsize)) env rp)
-     ['mov [:bp (- si (* i wordsize))] :ax]])
+    [(compile-expr expr (update state :stack-pointer (- (* i wordsize))))
+     ['mov [:bp (- (:stack-pointer state) (* i wordsize))] :ax]])
   (for [i (range (count exprs))]
-    [['mov :bx [:bp (- si (* i wordsize))]]
+    [['mov :bx [:bp (- (:stack-pointer state) (* i wordsize))]]
      ['mov [:bp (- (* (inc i) wordsize))] :bx]])
-  ['jmp rp])
+  ['jmp (:recur-point state)])
 
 (defprimitive init-graph []
   ['mov :ax 0x13]
@@ -237,21 +241,21 @@
 
 (defprimitive put-pixel [x y c]
   ['mov :cx :di]
-  (compile-expr y si env rp)
+  (compile-expr y state)
   ['sal :ax 4]
   ['mov :di :ax]
   ['sal :ax 2]
   ['add :di :ax]
-  (compile-expr x si env rp)
+  (compile-expr x state)
   ['sar :ax 2]
   ['add :di :ax]
-  (compile-expr c si env rp)
+  (compile-expr c state)
   ['sar :ax 2]
   ['stosb]
   ['mov :di :cx])
 
 (defprimitive cdr [x]
-  (compile-expr x si env rp)
+  (compile-expr x state)
   ['mov :bx :ax]
   ['mov :ax [:bx (dec wordsize)]])
 
@@ -259,7 +263,7 @@
   ['mov [:si] (-> label name keyword)]
   ['add :si wordsize]
   (for [fvar free-vars]
-    [(compile-expr fvar si env rp)
+    [(compile-expr fvar state)
      ['mov [:si] :ax]
      ['add :si wordsize]])
   ['mov :ax :si]
@@ -268,27 +272,36 @@
   ['add :si 7]
   ['and :si 0xfff8])
 
+(def initial-compilation-state
+  {:stack-pointer (- wordsize)
+   :environment {}
+   :recur-point nil})
+
+(defn compile-var-access
+  [symbol environment]
+  (let [{:keys [type offset]} (environment symbol)]
+    (if (= type :bound)
+      [['mov :ax [:bp offset]]]
+      [['mov :bx :di]
+       ['mov :ax [:bx (- offset +closure-tag+)]]])))
+
 (defn compile-expr
-  ([x] (compile-expr x (- wordsize) {} nil))
-  ([x si env rp]
+  ([x] (compile-expr x initial-compilation-state))
+  ([x state]
      (cond (immediate? x)
            [['mov :ax (immediate-rep x)]]
            (variable? x)
-           (let [{:keys [type offset]} (env x)]
-             (if (= type :bound)
-               [['mov :ax [:bp offset]]]
-               [['mov :bx :di]
-                ['mov :ax [:bx (- offset +closure-tag+)]]]))
+           (compile-var-access x (:environment state))
            (primcall? x)
            (if-let [prim (primitives (first x))]
-             (prim si env rp x)
+             (prim state x)
              (condp = (first x)
-               'let (compile-let (second x) (next (next x)) si env false rp)
-               'loop (compile-let (second x) (next (next x)) si env true (genkey))
-               'if (compile-if (second x) (nth x 2) (nth x 3) si env rp)
-               'do (apply concat (map #(compile-expr % si env rp) (rest x)))
-               'fncall (compile-call si env (second x) (next (next x)) rp)
-               'labels (compile-labels si env (second x) (nth x 2) rp)
+               'let (compile-let (second x) (next (next x)) false state)
+               'loop (compile-let (second x) (next (next x)) true (assoc state :recur-point (genkey)))
+               'if (compile-if (second x) (nth x 2) (nth x 3) state)
+               'do (apply concat (map #(compile-expr % state) (rest x)))
+               'fncall (compile-call (second x) (next (next x)) state)
+               'labels (compile-labels (second x) (nth x 2) state)
                (throw (Exception. (format "Unknown primitive: %s" (first x)))))))))
 
 (defn collect-closures
