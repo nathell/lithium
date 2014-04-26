@@ -294,9 +294,11 @@
     {:code (codeseq
             (:code state)
             (compile-expr expr state)
-            ['mov [address] :ax]),
+            ['mov [address] :ax]
+            ['sub :sp 2]
+            ['sub :bp 2]),
      :environment (conj environment (make-environment-element symbol :var address)),
-     :stack-pointer (- stack-pointer wordsize)}))
+     :stack-pointer stack-pointer}))
 
 (defn add-comment
   [comm res]
