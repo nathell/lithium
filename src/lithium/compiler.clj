@@ -298,25 +298,33 @@
      :environment (conj environment (make-environment-element symbol :var address)),
      :stack-pointer (- stack-pointer wordsize)}))
 
+(defn add-comment
+  [comm res]
+  (if (map? res)
+    (update-in res [:code] #(vec (cons ['comment comm] %)))
+    (vec (cons ['comment comm] res))))
+
 (defn compile-expr
   ([x] (compile-expr x initial-compilation-state))
   ([x state]
-     (cond (immediate? x)
-           [['mov :ax (immediate-rep x)]]
-           (variable? x)
-           (compile-var-access x (:environment state))
-           (primcall? x)
-           (if-let [prim (primitives (first x))]
-             (prim state x)
-             (condp = (first x)
-               'let (compile-let (second x) (next (next x)) false state)
-               'loop (compile-let (second x) (next (next x)) true (assoc state :recur-point (genkey)))
-               'if (compile-if (second x) (nth x 2) (nth x 3) state)
-               'do (apply concat (map #(compile-expr % state) (rest x)))
-               'fncall (compile-call (second x) (next (next x)) state)
-               'labels (compile-labels (second x) (nth x 2) state)
-               'def (compile-def (second x) (nth x 2) state)
-               (throw (Exception. (format "Unknown primitive: %s" (first x)))))))))
+     (add-comment
+      x
+      (cond (immediate? x)
+            [['mov :ax (immediate-rep x)]]
+            (variable? x)
+            (compile-var-access x (:environment state))
+            (primcall? x)
+            (if-let [prim (primitives (first x))]
+              (prim state x)
+              (condp = (first x)
+                'let (compile-let (second x) (next (next x)) false state)
+                'loop (compile-let (second x) (next (next x)) true (assoc state :recur-point (genkey)))
+                'if (compile-if (second x) (nth x 2) (nth x 3) state)
+                'do (apply concat (map #(compile-expr % state) (rest x)))
+                'fncall (compile-call (second x) (next (next x)) state)
+                'labels (compile-labels (second x) (nth x 2) state)
+                'def (compile-def (second x) (nth x 2) state)
+                (throw (Exception. (format "Unknown primitive: %s" (first x))))))))))
 
 (defn collect-closures
   [bound-vars expr]

@@ -213,8 +213,11 @@
        (next code) (inc pos))
       result)))
 
+(defn strip-comments [prog]
+  (remove #(and (vector? %) (= (first %) 'comment)) prog))
+
 (defn asm [prog]
-  (loop [prog prog code [] pc 0 labels {}]
+  (loop [prog (strip-comments prog) code [] pc 0 labels {}]
     (if-not (seq prog)
       (resolve-labels code labels)
       (let [ins (first prog)]
