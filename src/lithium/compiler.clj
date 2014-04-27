@@ -276,6 +276,7 @@
 (def initial-compilation-state
   {:code []
    :stack-pointer (- wordsize)
+   :global-env-start (- 0x10000 wordsize)
    :environment {}
    :recur-point nil})
 
@@ -290,16 +291,16 @@
       (throw (Exception. (str "Unbound variable: " symbol))))))
 
 (defn compile-def 
-  [symbol expr {:keys [stack-pointer environment] :as state}]
-  (let [address (+ 0x10000 stack-pointer)]
-    {:code (codeseq
-            (:code state)
-            (compile-expr expr state)
-            ['mov [address] :ax]
-            ['sub :sp 2]
-            ['sub :bp 2]),
-     :environment (conj environment (make-environment-element symbol :var address)),
-     :stack-pointer stack-pointer}))
+  [symbol expr {:keys [stack-pointer environment global-env-start] :as state}]
+  {:code (codeseq
+          (:code state)
+          (compile-expr expr state)
+          ['mov [global-env-start] :ax]
+          ['sub :sp 2]
+          ['sub :bp 2]),
+   :environment (conj environment (make-environment-element symbol :var global-env-start)),
+   :stack-pointer stack-pointer,
+   :global-env-start (- global-env-start wordsize)})
 
 (defn add-comment
   [comm res]
