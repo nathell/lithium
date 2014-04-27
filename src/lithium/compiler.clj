@@ -153,7 +153,7 @@
   ['sar :ax 2]
   ['mov [:bp (:stack-pointer state)] :ax]
   (compile-expr a (update state :stack-pointer (- wordsize)))
-  ['mul [:bp (:stack-pointer state)]])
+  ['mul [:word :bp (:stack-pointer state)]])
 
 (defprimitive mod [a b]
   (compile-expr b state)
@@ -162,7 +162,7 @@
   (compile-expr a (update state :stack-pointer (- wordsize)))
   ['mov :dx 0]
   ['sar :ax 2]
-  ['div [:bp (:stack-pointer state)]]
+  ['div [:word :bp (:stack-pointer state)]]
   ['mov :ax :dx]
   ['sal :ax 2])
 
