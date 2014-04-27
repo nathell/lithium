@@ -35,6 +35,8 @@
      {:o 0 :no 1 :b 2 :c 2 :nae 2 :ae 3 :nb 3 :nc 3 :e 4 :z 4 :ne 5 :nz 5 :be 6 :na 6 :a 7 :nbe 7
       :s 8 :ns 9 :p 10 :pe 10 :np 11 :po 11 :l 12 :nge 12 :ge 13 :nl 13 :le 14 :ng 14 :g 15 :nle 15})
 
+(def +memory-widths+ #{:byte :word})
+
 (defn modrm
   [mod spare rm]
   (+ (bit-shift-left mod 6)
@@ -47,8 +49,11 @@
 (defn imm8  [x] (and (integer? x) (<= 0 x 255)))
 (defn imm16 [x] (or (and (integer? x) (<= 0 x 65535)) (keyword? x)))
 (defn mem   [x] (vector? x))
-(defn rm8   [x] (or (reg8 x) (mem x)))
-(defn rm16  [x] (or (reg16 x) (mem x)))
+(defn width [x] (first (filter +memory-widths+ x)))
+(defn mem8  [x] (and (mem x) (let [w (width x)] (or (nil? w) (= w :byte)))))
+(defn mem16 [x] (and (mem x) (let [w (width x)] (or (nil? w) (= w :word)))))
+(defn rm8   [x] (or (reg8 x) (mem8 x)))
+(defn rm16  [x] (or (reg16 x) (mem16 x)))
 (defn label [x] (keyword? x))
 
 (def assembly-table
@@ -92,10 +97,10 @@
       [:and rm8 imm8]     [0x80 :4 :ib]
       [:and rm16 imm8]    [0x83 :4 :ib]
       [:and rm16 imm16]   [0x81 :4 :iw]
-      [:mul rm8]          [0xf6 :4]
       [:mul rm16]         [0xf7 :4]
+      [:mul rm8]          [0xf6 :4]
       [:div rm16]         [0xf7 :6]
-      [:div rm8]          [0xf6 :6]  ;; FIXME: implement explicit byte/word memory sizes
+      [:div rm8]          [0xf6 :6]
       [:sal rm8 1]        [0xd0 :4]
       [:sal rm8 imm8]     [0xc0 :4 :ib]
       [:sal rm16 1]       [0xd1 :4]
@@ -159,7 +164,8 @@
 (defn make-modrm [rm-desc spare]
   (if (keyword? rm-desc)
     [(modrm 3 spare (-> rm-desc +registers+ :value))]
-    (let [registers (vec (sort-by name (filter keyword? rm-desc)))
+    (let [rm-desc (remove +memory-widths+ rm-desc)
+          registers (vec (sort-by name (filter keyword? rm-desc)))
           displacement (reduce + 0 (filter integer? rm-desc))
           rm-map {[:bx :si] 0 [:bx :di] 1 [:bp :si] 2 [:bp :di] 3 [:si] 4 [:di] 5 [:bp] 6 [] 6 [:bx] 7}
           mod (cond
