@@ -192,6 +192,7 @@
 
 (defprimitive write-char [x]
   (compile-expr x state)
+  ['sar :ax 2]
   ['mov :ah 0x0e]
   ['int 0x10])
 
