@@ -134,7 +134,7 @@
   (let [f1 (first instr)
         f2 (first template)]
     (and (or (= (name f1) (name f2))
-             ((set (keys +condition-codes+)) (extract-cc f1 f2))) 
+             ((set (keys +condition-codes+)) (extract-cc f1 f2)))
         (= (count instr) (count template))
          (reduce #(and %1 %2) true (map part-of-spec-matches? (rest instr) (rest template))))))
 
@@ -186,7 +186,7 @@
      (= byte-desc :ib) (word-to-bytes [8 imm])
      (= byte-desc :iw) (word-to-bytes [16 imm])
      (= byte-desc :rb) [(make-label op1 :byte)]
-     (= byte-desc :rw) [:placeholder (make-label op1 :word)]     
+     (= byte-desc :rw) [:placeholder (make-label op1 :word)]
      (and (keyword? byte-desc) (lenient-parse-int (name byte-desc)))
        (make-modrm rm (lenient-parse-int (name byte-desc)))
      (= byte-desc :r)
@@ -243,7 +243,7 @@
       (.write f (into-array Byte/TYPE (map #(byte (if (>= % 128) (- % 256) %)) assembled)))
       nil)))
 
-(defn run! [prog]
+(defn run-program! [prog]
   (let [filename "/tmp/a.com"]
     (assemble-file prog filename)
     (sh "dosbox" filename)

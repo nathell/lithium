@@ -1,6 +1,6 @@
 (ns lithium.compiler
   (:require [clojure.string :as string])
-  (:use [lithium.utils :only [read-all update]]))
+  (:use [lithium.utils :only [read-all]]))
 
 (def primitives {})
 
@@ -15,9 +15,6 @@
      (assoc primitives '~name
             (fn [~'state [_# ~@args]]
               (codeseq ~@code)))))
-
-(defn boolean? [x]
-  (or (= x true) (= x false)))
 
 (def +nil+ 2r00101111)
 (def +boolean-tag+ 2r0011111)
@@ -62,12 +59,12 @@
              code
              (compile-expr expr state)
              ['mov [:bp stack-pointer] :ax])
-            (update state
-                    :stack-pointer (- 2)
-                    :environment (conj (make-environment-element v :bound stack-pointer)))])
+            (-> state
+                (update :stack-pointer - 2)
+                (update :environment conj (make-environment-element v :bound stack-pointer)))])
          [[] state]
          (partition 2 bindings))]
-    (concat code 
+    (concat code
             (when loop? [(:recur-point state)])
             (mapcat #(compile-expr % state) body))))
 
@@ -99,10 +96,10 @@
    (map-indexed
     (fn [i expr]
       (codeseq
-       (compile-expr expr (update state :stack-pointer (- (* wordsize (inc i)))))
+       (compile-expr expr (update state :stack-pointer - (* wordsize (inc i))))
        ['push :ax]))
     args)
-   (compile-expr expr (update state :stack-pointer (- (* wordsize (inc (count args))))))
+   (compile-expr expr (update state :stack-pointer - (* wordsize (inc (count args)))))
    ['add :sp (* wordsize (+ 2 (count args)))]
    ['push :di]
    ['mov :di :ax]
@@ -127,10 +124,10 @@
                                      (make-environment-element x :bound (- -2 i i))) args)
               fvar-env (map-indexed (fn [i x]
                                       (make-environment-element x :free (+ 2 i i))) fvars)]
-          (compile-expr body 
-                        (update state
-                                :stack-pointer (- (* wordsize (count args)))
-                                :environment (into (concat arg-env fvar-env)))))
+          (compile-expr body
+                        (-> state
+                            (update :stack-pointer - (* wordsize (count args)))
+                            (update :environment into (concat arg-env fvar-env)))))
         ['add :bp wordsize]
         ['ret]))
      body-label
@@ -139,27 +136,27 @@
 (defprimitive + [a b]
   (compile-expr b state)
   ['mov [:bp (:stack-pointer state)] :ax]
-  (compile-expr a (update state :stack-pointer (- wordsize)))
+  (compile-expr a (update state :stack-pointer - wordsize))
   ['add :ax [:bp (:stack-pointer state)]])
 
 (defprimitive - [a b]
   (compile-expr b state)
   ['mov [:bp (:stack-pointer state)] :ax]
-  (compile-expr a (update state :stack-pointer (- wordsize)))
+  (compile-expr a (update state :stack-pointer - wordsize))
   ['sub :ax [:bp (:stack-pointer state)]])
 
 (defprimitive * [a b]
   (compile-expr b state)
   ['sar :ax 2]
   ['mov [:bp (:stack-pointer state)] :ax]
-  (compile-expr a (update state :stack-pointer (- wordsize)))
+  (compile-expr a (update state :stack-pointer - wordsize))
   ['mul [:word :bp (:stack-pointer state)]])
 
 (defprimitive mod [a b]
   (compile-expr b state)
   ['sar :ax 2]
   ['mov [:bp (:stack-pointer state)] :ax]
-  (compile-expr a (update state :stack-pointer (- wordsize)))
+  (compile-expr a (update state :stack-pointer - wordsize))
   ['mov :dx 0]
   ['sar :ax 2]
   ['div [:word :bp (:stack-pointer state)]]
@@ -169,7 +166,7 @@
 (defprimitive = [a b]
   (compile-expr b state)
   ['mov [:bp (:stack-pointer state)] :ax]
-  (compile-expr a (update state :stack-pointer (- wordsize)))
+  (compile-expr a (update state :stack-pointer - wordsize))
   ['cmp :ax [:bp (:stack-pointer state)]]
   (let [l1 (genkey) l2 (genkey)]
     [['jne l1]
@@ -182,7 +179,7 @@
 (defprimitive < [a b]
   (compile-expr b state)
   ['mov [:bp (:stack-pointer state)] :ax]
-  (compile-expr a (update state :stack-pointer (- wordsize)))
+  (compile-expr a (update state :stack-pointer - wordsize))
   ['xor :bx :bx]
   ['cmp :ax [:bp (:stack-pointer state)]]
   ['setb :bl]
@@ -227,7 +224,7 @@
 
 (defprimitive recur [& exprs]
   (for [[i expr] (map-indexed vector exprs)]
-    [(compile-expr expr (update state :stack-pointer (- (* i wordsize))))
+    [(compile-expr expr (update state :stack-pointer - (* i wordsize)))
      ['mov [:bp (- (:stack-pointer state) (* i wordsize))] :ax]])
   (for [i (range (count exprs))]
     [['mov :bx [:bp (- (:stack-pointer state) (* i wordsize))]]
@@ -290,7 +287,7 @@
       :var   [['mov :ax [offset]]]
       (throw (Exception. (str "Unbound variable: " symbol))))))
 
-(defn compile-def 
+(defn compile-def
   [symbol expr {:keys [stack-pointer environment global-env-start] :as state}]
   {:code (codeseq
           (:code state)
@@ -335,7 +332,7 @@
   (cond
    (not (primcall? expr))
    [[] expr]
-   
+
    (#{'let 'loop} (first expr))
    (let [[bound-vars binding-closures bindings]
          (reduce (fn [[bound-vars closures bindings] [sym val-expr]]
@@ -388,11 +385,11 @@
      (let [res (compile-expr (clojure->tcr sexp) state)]
        (if (map? res)
          (into state res)
-         (update state :code (concat res)))))
+         (update state :code concat res))))
    initial-compilation-state
    sexps))
 
-(defn compile-program 
+(defn compile-program
   [sexps]
   (concat prolog
           (:code (compile-program* sexps))
