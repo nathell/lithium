@@ -1,6 +1,7 @@
 (ns lithium.compiler
-  (:require [clojure.string :as string])
-  (:use [lithium.utils :only [read-all]]))
+  (:require [clojure.string :as string]
+            [lithium.assembler :as assembler]
+            [lithium.utils :refer [read-all]]))
 
 (def primitives {})
 
@@ -398,3 +399,7 @@
 (defn compile-file
   [f]
   (compile-program (read-all f)))
+
+(defn compile-and-run!
+  [f]
+  (assembler/run-program! (compile-file f)))
