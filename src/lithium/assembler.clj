@@ -70,17 +70,27 @@
       [:xor rm16 reg16]   [0x31 :r]
       [:push reg16]       [[:r+ 0x50]]
       [:pop reg16]        [[:r+ 0x58]]
+      [:push :cs]         [0x0e]
+      [:pushf]            [0x9c]
+      [:pusha]            [0x60]
       [:stosb]            [0xaa]
+      [:stosw]            [0xab]
+      [:movsw]            [0xa5]
+      [:rol rm16 imm8]    [0xc1 :0 :ib]
+      [:daa]              [0x27]
       [:ret]              [0xc3]
       [:cli]              [0xfa]
       [:inc reg16]        [[:r+ 0x40]]
       [:inc rm8]          [0xfe :0]
+      [:dec reg16]        [[:r+ 0x48]]
+      [:dec rm8]          [0xfe :1]
       [:cmp :al imm8]     [0x3c :ib]
       [:cmp :ax imm16]    [0x3d :iw]
       [:cmp rm8 imm8]     [0x80 :7 :ib]
       [:cmp rm16 imm16]   [0x81 :7 :iw]
       [:cmp reg8 rm8]     [0x3a :r]
       [:cmp reg16 rm16]   [0x3b :r]
+      [:adc :al imm8]     [0x14 :ib]
       [:add rm8 reg8]     [0x00 :r]
       [:add rm16 reg16]   [0x01 :r]
       [:add reg8 rm8]     [0x02 :r]
@@ -197,10 +207,14 @@
        [(+ (second byte-desc) (-> instr (extract-cc instr-template) +condition-codes+))])))
 
 (defn assemble-instruction [instr]
-  (let [[template parts] (find-template instr)]
-    (when-not template (throw (Exception. (str "Could not assemble instruction: " (pr-str instr)))))
-    (let [assembled-parts (map (partial parse-byte instr template) parts)]
-      (apply concat assembled-parts))))
+  (cond
+    (= (first instr) 'string) (map int (second instr))
+    (= (first instr) 'bytes) (second instr)
+    :otherwise
+    (let [[template parts] (find-template instr)]
+      (when-not template (throw (Exception. (str "Could not assemble instruction: " (pr-str instr)))))
+      (let [assembled-parts (map (partial parse-byte instr template) parts)]
+        (apply concat assembled-parts)))))
 
 ;; This is the value added to absolute addresses of labels, telling
 ;; the assembler where the code starts from. Defaults to 0x100 for
@@ -233,18 +247,7 @@
                 cnt (count assembled)]
             (recur (next prog) (into code assembled) (+ pc cnt) labels)))))))
 
-(defn hexdump [prog]
-  (string/join " " (map #(format "%02x" %) (asm prog))))
-
-(defn assemble-file [prog out]
-  (let [assembled (asm (if (string? prog) (read-string (str "[" (slurp prog) "]")) prog))
-        byte-arr  (into-array Byte/TYPE (map #(byte (if (>= % 128) (- % 256) %)) assembled))]
-    (with-open [f (java.io.FileOutputStream. out)]
-      (.write f (into-array Byte/TYPE (map #(byte (if (>= % 128) (- % 256) %)) assembled)))
-      nil)))
-
-(defn run-program! [prog]
-  (let [filename "/tmp/a.com"]
-    (assemble-file prog filename)
-    (sh "dosbox" filename)
-    nil))
+(defn assemble [prog]
+  (asm (if (string? prog)
+         (read-string (str "[" (slurp prog) "]"))
+         prog)))

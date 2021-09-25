@@ -4,14 +4,59 @@
             [lithium.compiler.code :refer [codeseq compile-expr genkey]]
             [lithium.compiler.primitives :as primitives]
             [lithium.compiler.repr :as repr]
+            [lithium.driver :as driver]
             [lithium.utils :refer [read-all]]))
 
-(def prolog [['cli]
-             ['mov :bp :sp]
-             ['mov :si :heap-start]
-             ['add :si 7]
-             ['and :si 0xfff8]])
-(def epilog [:forever ['jmp :forever] :heap-start])
+(def prolog
+  [['cli]
+   ['mov :bp :sp]
+   ['mov :si :heap-start]
+   ['add :si 7]
+   ['and :si 0xfff8]])
+
+(def endless-loop-epilog
+  [:forever
+   ['jmp :forever]])
+
+(def register-dump
+  ;; taken from http://www.fysnet.net/yourhelp.htm
+  [['pushf]
+   ['pusha]
+   ['push :cs]
+   ['mov :di :buff]
+   ['mov :si :msg1]
+   ['mov :cx 10]
+   :loop1
+   ['movsw]
+   ['mov :al (int \=)]
+   ['stosb]
+   ['pop :ax]
+   ['mov :bx 4]
+   :ploop
+   ['rol :ax 4]
+   ['push :ax]
+   ['and :al 0x0f]
+   ['daa]
+   ['add :al 0xf0]
+   ['adc :al 0x40]
+   ['stosb]
+   ['pop :ax]
+   ['dec :bx]
+   ['jnz :ploop]
+   ['mov :ax 0x0d0a]
+   ['stosw]
+   ['loop :loop1]
+   ['mov :al 0x24]
+   ['stosb]
+   ['mov :dx :buff]
+   ['mov :ah 9]
+   ['int 0x21]
+   ['mov :ah 0x4c]
+   ['int 0x21]
+   :msg1
+   ['string "CSDISIBPSPBXDXCXAXFL"]
+   :buff
+   ['bytes (repeat 100 0)]])
 
 (defn primcall? [x]
   (or (list? x) (seq? x)))
@@ -224,15 +269,17 @@
    sexps))
 
 (defn compile-program
-  [sexps]
+  [prog & [{:keys [epilog]
+            :or {epilog endless-loop-epilog}}]]
   (concat prolog
-          (:code (compile-program* sexps))
-          epilog))
-
-(defn compile-file
-  [f]
-  (compile-program (read-all f)))
+          (:code (compile-program* (read-all prog)))
+          epilog
+          [:heap-start]))
 
 (defn compile-and-run!
-  [f]
-  (assembler/run-program! (compile-file f)))
+  ([f] (compile-and-run! f true))
+  ([f wait?]
+   (-> f
+       (compile-program {:epilog (if wait? endless-loop-epilog register-dump)})
+       assembler/assemble
+       (driver/run-program! wait?))))
