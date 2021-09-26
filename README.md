@@ -48,21 +48,6 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-The file `resources/capture.com` comes from the DOS Utilities Collection as obtained
-from http://www.pc-tools.net/dos/dosutils/, is copyright by Jem Berkes, and carries the
-following copyright notice:
-
-```
-You may use and share the programs in this freeware package. However,
-remember that YOU MAY NOT MODIFY THESE PROGRAMS IN ANY WAY. They are
-NOT PUBLIC DOMAIN, but rather COPYRIGHTED FREEWARE.
-
-I, the author, take NO RESPONSIBILITY for any damage that may result
-from using any of these programs.
-
-Jem Berkes <jberkes@pc-tools.net>
-```
-
 The assembly code in `register-dump` is a s-expression version of a snippet
 that comes from http://www.fysnet.net/yourhelp.htm and is copyright by
 Forever Young Software.
