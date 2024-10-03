@@ -145,7 +145,7 @@
                     (if (map? body-res) (:code body-res) body-res))]
     (if (map? body-res)
       (assoc body-res :code code)
-      code))))
+      code)))
 
 (def initial-compilation-state
   {:code []
