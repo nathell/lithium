@@ -8,7 +8,7 @@
 (defmacro defprimitive [name args & code]
   `(def primitives
      (assoc primitives '~name
-            (fn [~'state [_# ~@args]]
+            (fn [~'state [~@args]]
               (codeseq ~@code)))))
 
 (defprimitive + [a b]
@@ -71,8 +71,8 @@
   ['mov :ah 0x0e]
   ['int 0x10])
 
-(defprimitive byte [x]
-  ['mov :al x])
+(defprimitive byte [{:keys [value]}]
+  ['mov :al value])
 
 (defprimitive inc [x]
   (compile-expr x state)
@@ -134,16 +134,3 @@
   (compile-expr x state)
   ['mov :bx :ax]
   ['mov :ax [:bx (dec repr/wordsize)]])
-
-(defprimitive closure [label free-vars]
-  ['mov [:si] (-> label name keyword)]
-  ['add :si repr/wordsize]
-  (for [fvar free-vars]
-    [(compile-expr fvar state)
-     ['mov [:si] :ax]
-     ['add :si repr/wordsize]])
-  ['mov :ax :si]
-  ['sub :ax (* repr/wordsize (inc (count free-vars)))]
-  ['or :ax repr/closure-tag]
-  ['add :si 7]
-  ['and :si 0xfff8])

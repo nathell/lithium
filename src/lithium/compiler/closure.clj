@@ -36,4 +36,6 @@
                                    (swap! codes conj {:type :code, :label label, :args args, :bound-vars bound-vars, :body body})
                                    {:type :closure, :label label, :vars bound-vars})))
         transformed (ast/walk ast identity outer-xform)]
-    {:type :labels, :labels @codes, :body transformed}))
+    (if (seq @codes)
+      {:type :labels, :labels @codes, :body transformed}
+      transformed)))

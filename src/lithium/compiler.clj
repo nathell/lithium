@@ -1,6 +1,8 @@
 (ns lithium.compiler
   (:require [clojure.string :as string]
             [lithium.assembler :as assembler]
+            [lithium.compiler.ast :as ast]
+            [lithium.compiler.closure :as closure]
             [lithium.compiler.code :refer [codeseq compile-expr genkey]]
             [lithium.compiler.primitives :as primitives]
             [lithium.compiler.repr :as repr]
@@ -58,11 +60,6 @@
    :buff
    ['bytes (repeat 100 0)]])
 
-(defn primcall? [x]
-  (or (list? x) (seq? x)))
-
-(defn third [x] (nth x 2))
-
 (defn make-environment-element
   [symbol type offset]
   [symbol {:type type, :offset offset}])
@@ -71,16 +68,16 @@
   [bindings body loop? state]
   (let [[code state]
         (reduce
-         (fn [[code {:keys [stack-pointer environment] :as state}] [v expr]]
+         (fn [[code {:keys [stack-pointer environment] :as state}] {:keys [symbol expr]}]
            [(codeseq
              code
              (compile-expr expr state)
              ['mov [:bp stack-pointer] :ax])
             (-> state
                 (update :stack-pointer - 2)
-                (update :environment conj (make-environment-element v :bound stack-pointer)))])
+                (update :environment conj (make-environment-element symbol :bound stack-pointer)))])
          [[] state]
-         (partition 2 bindings))]
+         bindings)]
     (concat code
             (when loop? [(:recur-point state)])
             (mapcat #(compile-expr % state) body))))
@@ -126,26 +123,29 @@
 
 (defn compile-labels
   [labels code state]
-  (let [labels (partition 2 labels)
-        body-label (genkey)]
-    (codeseq
-     ['jmp body-label]
-     (for [[label [code-sym args fvars body]] labels]
-       (codeseq
-        (keyword (name label))
-        ['sub :bp repr/wordsize]
-        (let [arg-env (map-indexed (fn [i x]
-                                     (make-environment-element x :bound (- -2 i i))) args)
-              fvar-env (map-indexed (fn [i x]
-                                      (make-environment-element x :free (+ 2 i i))) fvars)]
-          (compile-expr body
-                        (-> state
-                            (update :stack-pointer - (* repr/wordsize (count args)))
-                            (update :environment into (concat arg-env fvar-env)))))
-        ['add :bp repr/wordsize]
-        ['ret]))
-     body-label
-     (compile-expr code state))))
+  (let [body-label (genkey)
+        body-res   (compile-expr code state)
+        code       (codeseq
+                    ['jmp body-label]
+                    (for [{:keys [label args bound-vars body]} labels]
+                      (codeseq
+                       (keyword (name label))
+                       ['sub :bp repr/wordsize]
+                       (let [arg-env  (map-indexed (fn [i x]
+                                                     (make-environment-element x :bound (- -2 i i))) args)
+                             fvar-env (map-indexed (fn [i x]
+                                                     (make-environment-element x :free (+ 2 i i))) bound-vars)]
+                         (compile-expr (first body)  ; FIXME needs multi-expr support
+                                       (-> state
+                                           (update :stack-pointer - (* repr/wordsize (count args)))
+                                           (update :environment into (concat arg-env fvar-env)))))
+                       ['add :bp repr/wordsize]
+                       ['ret]))
+                    body-label
+                    (if (map? body-res) (:code body-res) body-res))]
+    (if (map? body-res)
+      (assoc body-res :code code)
+      code))))
 
 (def initial-compilation-state
   {:code []
@@ -176,92 +176,57 @@
    :stack-pointer stack-pointer,
    :global-env-start (- global-env-start repr/wordsize)})
 
+(defn compile-closure
+  [label free-vars state]
+  (codeseq
+   ['mov [:si] (-> label name keyword)]
+   ['add :si repr/wordsize]
+   (for [fvar free-vars]
+     [(compile-expr {:type :env-lookup, :symbol fvar} state)
+      ['mov [:si] :ax]
+      ['add :si repr/wordsize]])
+   ['mov :ax :si]
+   ['sub :ax (* repr/wordsize (inc (count free-vars)))]
+   ['or :ax repr/closure-tag]
+   ['add :si 7]
+   ['and :si 0xfff8]))
+
 (defn add-comment
   [comm res]
   (if (map? res)
     (update-in res [:code] #(vec (cons ['comment comm] %)))
     (vec (cons ['comment comm] res))))
 
+(defn compile-value [{:keys [value]}]
+  [['mov :ax (repr/immediate value)]])
+
 (defn compile-expr*
-  ([x] (compile-expr* x initial-compilation-state))
-  ([x state]
-     (add-comment
-      x
-      (cond (repr/immediate? x)
-            [['mov :ax (repr/immediate x)]]
-            (variable? x)
-            (compile-var-access x (:environment state))
-            (primcall? x)
-            (if-let [prim (primitives/primitives (first x))]
-              (prim state x)
-              (condp = (first x)
-                'let (compile-let (second x) (next (next x)) false state)
-                'loop (compile-let (second x) (next (next x)) true (assoc state :recur-point (genkey)))
-                'if (compile-if (second x) (nth x 2) (nth x 3) state)
-                'do (apply concat (map #(compile-expr % state) (rest x)))
-                'fncall (compile-call (second x) (next (next x)) state)
-                'labels (compile-labels (second x) (nth x 2) state)
-                'def (compile-def (second x) (nth x 2) state)
-                (throw (Exception. (format "Unknown primitive: %s" (first x))))))))))
+  [ast state]
+  (ast/match ast
+             :value []                           (compile-value ast)
+             :env-lookup [symbol]                (compile-var-access symbol (:environment state))
+             :primitive-call [primitive args]    ((primitives/primitives primitive) state args)
+             :def [symbol definition]            (compile-def symbol definition state)
+             :let [bindings body]                (compile-let bindings body false state)
+             :loop [bindings body]               (compile-let bindings body true (assoc state :recur-point (genkey)))
+             :if [condition then-expr else-expr] (compile-if condition then-expr else-expr state)
+             :do [exprs]                         (apply concat (map #(compile-expr % state) exprs))
+             :fn-call [fn-expr args]             (compile-call fn-expr args state)
+             :labels [labels body]               (compile-labels labels body state)
+             :closure [label vars]               (compile-closure label vars state)
+             (throw (ex-info "Unable to compile" ast))))
 
 (alter-var-root #'compile-expr (constantly compile-expr*))
-
-(defn collect-closures
-  [bound-vars expr]
-  (cond
-   (not (primcall? expr))
-   [[] expr]
-
-   (#{'let 'loop} (first expr))
-   (let [[bound-vars binding-closures bindings]
-         (reduce (fn [[bound-vars closures bindings] [sym val-expr]]
-                   (let [[new-closures new-val-expr] (collect-closures bound-vars val-expr)]
-                     [(conj bound-vars sym) (into closures new-closures) (conj bindings sym new-val-expr)]))
-                 [bound-vars [] []]
-                 (partition 2 (second expr)))
-         transformed-body (map (partial collect-closures bound-vars) (next (next expr)))
-         body-closures (apply concat (map first transformed-body))
-         new-body (map second transformed-body)]
-     [(into binding-closures body-closures)
-      `(~(first expr) ~(vec bindings) ~@new-body)])
-
-   (or (#{'if 'do 'recur} (first expr)) (primitives/primitives (first expr)))
-   (let [transformed-body (map (partial collect-closures bound-vars) (next expr))]
-     [(apply concat (map first transformed-body))
-      `(~(first expr) ~@(map second transformed-body))])
-
-   (= (first expr) 'fn)
-   (let [body-bound-vars (into bound-vars (second expr))
-         transformed-body (map (partial collect-closures body-bound-vars) (next (next expr)))
-         sym (gensym "cl")]
-     [(conj (vec (apply concat (map first transformed-body)))
-            `(~sym (~'code ~(second expr) ~(vec bound-vars) ~@(map second transformed-body))))
-      `(~'closure ~sym ~(vec bound-vars))])
-
-   (= (first expr) 'def)
-   (let [[closures new-expr] (collect-closures bound-vars (nth expr 2))]
-     [closures `(~'def ~(second expr) ~new-expr)])
-
-   :otherwise
-   (let [transformed-fn (collect-closures bound-vars (first expr))
-         transformed-body (map (partial collect-closures bound-vars) (next expr))]
-     [(apply concat (first transformed-fn) (map first transformed-body))
-      `(~'fncall ~(second transformed-fn) ~@(map second transformed-body))])))
-
-(defn clojure->tcr
-  [prog]
-  (let [[closures expr] (collect-closures #{} prog)]
-    (if (seq closures)
-      (if (= (first expr) 'def)
-        `(~'def ~(second expr) (~'labels ~(vec (apply concat closures)) ~(nth expr 2)))
-        `(~'labels ~(vec (apply concat closures)) ~expr))
-      expr)))
 
 (defn compile-program*
   [sexps]
   (reduce
    (fn [{:keys [code env stack-start] :as state} sexp]
-     (let [res (compile-expr (clojure->tcr sexp) state)]
+     (let [res (-> sexp
+                   ast/clojure->ast
+                   closure/free-variable-analysis
+                   closure/collect-closures
+                   (compile-expr state))]
        (if (map? res)
          (into state res)
          (update state :code concat res))))

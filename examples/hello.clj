@@ -1,6 +1,6 @@
 (do
-  (write-char (byte 72))
-  (write-char (byte 101))
-  (write-char (byte 108))
-  (write-char (byte 108))
-  (write-char (byte 111)))
+  (write-char 72)
+  (write-char 101)
+  (write-char 108)
+  (write-char 108)
+  (write-char 111))

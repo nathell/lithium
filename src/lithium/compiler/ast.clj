@@ -29,6 +29,9 @@
     (= fst 'fn) {:type :fn
                  :args (first lst)
                  :body (mapv clojure->ast (next lst))}
+    (= fst 'def) {:type :def
+                  :symbol (first lst)
+                  :definition (clojure->ast (second lst))}
     (contains? '#{let loop} fst) {:type (keyword (name fst))
                                   :bindings (vec (for [[k v] (partition 2 (first lst))]
                                                    {:symbol k, :expr (clojure->ast v)}))
@@ -45,6 +48,7 @@
     (list? expr) (list->ast expr)
     (int? expr) {:type :value, :value-type :int, :value expr}
     (boolean? expr) {:type :value, :value-type :boolean, :value expr}
+    (char? expr) {:type :value, :value-type :char, :value expr}
     (symbol? expr) {:type :env-lookup, :symbol expr}
     (nil? expr) {:type :value, :value-type :nil, :value nil}
     :otherwise {:type :unrecognized
@@ -97,10 +101,18 @@
          :fn-call [fn-expr args] `(~(ast->clojure fn-expr) ~@(map ast->clojure args))
          :unrecognized [expr] expr
          :fn [args bound-vars body] `(~'fn ~@(when bound-vars [{:bound-vars bound-vars}]) ~args ~@(map ast->clojure body))
+         :def [symbol definition] `(~'def ~symbol ~(ast->clojure definition))
          let-like [type bindings body] `(~(symbol (name type))
                                          ~(vec (apply concat (for [{:keys [symbol expr]} bindings]
                                                                [symbol (ast->clojure expr)])))
-                                         ~@(map ast->clojure body))))
+                                         ~@(map ast->clojure body))
+         ;; after closure analysis:
+         :closure [label vars] `(~'closure ~label ~@vars)
+         :code [args bound-vars body] `(~'code ~args ~bound-vars ~@(map ast->clojure body))
+         :labels [labels body] `(~'labels ~(vec (mapcat (fn [{:keys [label] :as code}]
+                                                          [label (ast->clojure code)])
+                                                        labels))
+                                 ~(ast->clojure body))))
 
 (defn expr-update
   "Applies f to every sub-expression of ast, returning the updated ast."
@@ -114,6 +126,7 @@
                      (update :then-expr f)
                      (update :else-expr f))
           :do [] (update ast :exprs (partial mapv f))
+          :def [] (update ast :definition f)
           :primitive-call [] (update ast :args (partial mapv f))
           :fn-call [] (-> ast
                           (update :fn-expr f)
