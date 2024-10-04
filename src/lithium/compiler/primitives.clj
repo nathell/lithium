@@ -41,6 +41,16 @@
   ['mov :ax :dx]
   ['sal :ax 2])
 
+(defprimitive quot [a b]
+  (compile-expr b state)
+  ['sar :ax 2]
+  ['mov [:bp (:stack-pointer state)] :ax]
+  (compile-expr a (update state :stack-pointer - repr/wordsize))
+  ['mov :dx 0]
+  ['sar :ax 2]
+  ['div [:word :bp (:stack-pointer state)]]
+  ['sal :ax 2])
+
 (defprimitive = [a b]
   (compile-expr b state)
   ['mov [:bp (:stack-pointer state)] :ax]
