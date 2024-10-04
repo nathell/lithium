@@ -14,7 +14,8 @@
    ['mov :bp :sp]
    ['mov :si :heap-start]
    ['add :si 7]
-   ['and :si 0xfff8]])
+   ['and :si 0xfff8]
+   ['sub :sp 16]]) ;; reserve some space between bp and sp for temporary values
 
 (def endless-loop-epilog
   [:forever
@@ -103,23 +104,19 @@
 (defn compile-call
   [expr args {:keys [environment] :as state}]
   (codeseq
-   ['sub :sp (* repr/wordsize (+ 2 (count environment)))]
+   (compile-expr expr state)
+   ['push :di]
+   ['mov :di :ax]
    (map-indexed
     (fn [i expr]
       (codeseq
        (compile-expr expr (update state :stack-pointer - (* repr/wordsize (inc i))))
        ['push :ax]))
-    args)
-   (compile-expr expr (update state :stack-pointer - (* repr/wordsize (inc (count args)))))
-   ['add :sp (* repr/wordsize (+ 2 (count args)))]
-   ['push :di]
-   ['mov :di :ax]
-   ['mov :bx :ax]
-   ['mov :bp :sp]
+    (reverse args))
+   ['mov :bx :di]
    ['call [:bx (- repr/closure-tag)]]
-   ['pop :di]
-   ['add :sp (* repr/wordsize (count environment))]
-   ['mov :bp :sp]))
+   ['add :sp (* repr/wordsize (count args))]
+   ['pop :di]))
 
 (defn compile-labels
   [labels code state]
@@ -130,16 +127,19 @@
                     (for [{:keys [label args bound-vars body]} labels]
                       (codeseq
                        (keyword (name label))
-                       ['sub :bp repr/wordsize]
+                       ['push :bp]
+                       ['mov :bp :sp]
+                       ['sub :sp 16]
                        (let [arg-env  (map-indexed (fn [i x]
-                                                     (make-environment-element x :bound (- -2 i i))) args)
+                                                     (make-environment-element x :bound (* repr/wordsize (+ i 2)))) args)
                              fvar-env (map-indexed (fn [i x]
-                                                     (make-environment-element x :free (+ 2 i i))) bound-vars)]
+                                                     (make-environment-element x :free (* repr/wordsize (inc i)))) bound-vars)]
                          (compile-expr (first body)  ; FIXME needs multi-expr support
                                        (-> state
                                            (update :stack-pointer - (* repr/wordsize (count args)))
                                            (update :environment into (concat arg-env fvar-env)))))
-                       ['add :bp repr/wordsize]
+                       ['mov :sp :bp]
+                       ['pop :bp]
                        ['ret]))
                     body-label
                     (if (map? body-res) (:code body-res) body-res))]
