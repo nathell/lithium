@@ -21,6 +21,10 @@
   [:forever
    ['jmp :forever]])
 
+(def dos-exit-epilog
+  [['mov :ax 0x4c00]
+   ['int 0x21]])
+
 (def register-dump
   ;; taken from http://www.fysnet.net/yourhelp.htm
   [['pushf]
@@ -245,9 +249,9 @@
           [:heap-start]))
 
 (defn compile-and-run!
-  ([f] (compile-and-run! f true))
-  ([f wait?]
+  ([f] (compile-and-run! f dos-exit-epilog))
+  ([f epilog]
    (-> f
-       (compile-program {:epilog (if wait? endless-loop-epilog register-dump)})
+       (compile-program {:epilog epilog})
        assembler/assemble
-       (driver/run-program! wait?))))
+       (driver/run-program! (not= epilog register-dump)))))

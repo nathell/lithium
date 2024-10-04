@@ -4,7 +4,7 @@
             [clojure.test :refer [deftest are]]))
 
 (deftest test-compiler
-  (are [expr expected-result] (let [{:keys [ax]} (compiler/compile-and-run! [expr] false)]
+  (are [expr expected-result] (let [{:keys [ax]} (compiler/compile-and-run! [expr] compiler/register-dump)]
                                 (= ax (repr/immediate expected-result)))
     '(+ 3 4) 7
     '(< 10 15) true
