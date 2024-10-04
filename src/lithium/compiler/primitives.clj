@@ -104,9 +104,9 @@
   (for [[i expr] (map-indexed vector exprs)]
     [(compile-expr expr (update state :stack-pointer - (* i repr/wordsize)))
      ['mov [:bp (- (:stack-pointer state) (* i repr/wordsize))] :ax]])
-  (for [i (range (count exprs))]
+  (for [[i symbol] (map-indexed vector (:loop-symbols state))]
     [['mov :bx [:bp (- (:stack-pointer state) (* i repr/wordsize))]]
-     ['mov [:bp (- (* (inc i) repr/wordsize))] :bx]])
+     ['mov [:bp (get-in state [:environment symbol :offset])] :bx]])
   ['jmp (:recur-point state)])
 
 (defprimitive init-graph []

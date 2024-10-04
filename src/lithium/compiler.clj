@@ -81,7 +81,7 @@
          bindings)]
     (concat code
             (when loop? [(:recur-point state)])
-            (mapcat #(compile-expr % state) body))))
+            (mapcat #(compile-expr % (cond-> state loop? (assoc :loop-symbols (mapv :symbol bindings)))) body))))
 
 (defn variable? [x]
   (symbol? x))
