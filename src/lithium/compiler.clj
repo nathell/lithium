@@ -202,19 +202,22 @@
 
 (defn compile-expr*
   [ast state]
-  (ast/match ast
-             :value []                           (compile-value ast)
-             :env-lookup [symbol]                (compile-var-access symbol (:environment state))
-             :primitive-call [primitive args]    ((primitives/primitives primitive) state args)
-             :def [symbol definition]            (compile-def symbol definition state)
-             :let [bindings body]                (compile-let bindings body false state)
-             :loop [bindings body]               (compile-let bindings body true (assoc state :recur-point (genkey)))
-             :if [condition then-expr else-expr] (compile-if condition then-expr else-expr state)
-             :do [exprs]                         (apply concat (map #(compile-expr % state) exprs))
-             :fn-call [fn-expr args]             (compile-call fn-expr args state)
-             :labels [labels body]               (compile-labels labels body state)
-             :closure [label vars]               (compile-closure label vars state)
-             (throw (ex-info "Unable to compile" ast))))
+  (let [res (ast/match ast
+              :value []                           (compile-value ast)
+              :env-lookup [symbol]                (compile-var-access symbol (:environment state))
+              :primitive-call [primitive args]    ((primitives/primitives primitive) state args)
+              :def [symbol definition]            (compile-def symbol definition state)
+              :let [bindings body]                (compile-let bindings body false state)
+              :loop [bindings body]               (compile-let bindings body true (assoc state :recur-point (genkey)))
+              :if [condition then-expr else-expr] (compile-if condition then-expr else-expr state)
+              :do [exprs]                         (apply concat (map #(compile-expr % state) exprs))
+              :fn-call [fn-expr args]             (compile-call fn-expr args state)
+              :labels [labels body]               (compile-labels labels body state)
+              :closure [label vars]               (compile-closure label vars state)
+              (throw (ex-info "Unable to compile" ast)))]
+    (if (map? res)
+      (update res :code #(into [['comment (ast/ast->clojure ast)]] %))
+      (into [['comment (ast/ast->clojure ast)]] res))))
 
 (alter-var-root #'compile-expr (constantly compile-expr*))
 
