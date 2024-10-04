@@ -67,7 +67,7 @@
 
 (defprimitive write-char [x]
   (compile-expr x state)
-  ['sar :ax 2]
+  ['sar :ax 8]
   ['mov :ah 0x0e]
   ['int 0x10])
 
@@ -134,3 +134,8 @@
   (compile-expr x state)
   ['mov :bx :ax]
   ['mov :ax [:bx (dec repr/wordsize)]])
+
+(defprimitive int->char [x]
+  (compile-expr x state)
+  ['sal :ax 6]
+  ['mov :al repr/char-tag])
