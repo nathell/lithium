@@ -6,6 +6,7 @@
             [lithium.compiler.code :refer [codeseq compile-expr genkey]]
             [lithium.compiler.primitives :as primitives]
             [lithium.compiler.repr :as repr]
+            [lithium.compiler.state :as state]
             [lithium.driver :as driver]
             [lithium.utils :refer [read-all]]))
 
@@ -70,22 +71,23 @@
   [symbol {:type type, :offset offset}])
 
 (defn compile-let
-  [bindings body loop? state]
-  (let [[code state]
-        (reduce
-         (fn [[code {:keys [stack-pointer environment] :as state}] {:keys [symbol expr]}]
-           [(codeseq
-             code
-             (compile-expr expr state)
-             ['mov [:bp stack-pointer] :ax])
-            (-> state
-                (update :stack-pointer - 2)
-                (update :environment conj (make-environment-element symbol :bound stack-pointer)))])
-         [[] state]
-         bindings)]
-    (concat code
-            (when loop? [(:recur-point state)])
-            (mapcat #(compile-expr % (cond-> state loop? (assoc :loop-symbols (mapv :symbol bindings)))) body))))
+  [bindings body loop? orig-state]
+  (as-> orig-state state
+    (reduce
+     (fn [{:keys [stack-pointer] :as state} {:keys [symbol expr]}]
+       (-> state
+           (codeseq
+            [:subexpr expr]
+            ['mov [:bp stack-pointer] :ax])
+           (update :stack-pointer - 2)
+           (update :environment conj (make-environment-element symbol :bound stack-pointer))))
+     state
+     bindings)
+    (if loop?
+      (assoc (codeseq state (:recur-point state)) :loop-symbols (mapv :symbol bindings))
+      state)
+    (reduce #(codeseq %1 [:subexpr %2]) state body)
+    (state/restore-env orig-state state)))
 
 (defn variable? [x]
   (symbol? x))
@@ -94,150 +96,161 @@
   [test-expr then-expr else-expr state]
   (let [l0 (genkey) l1 (genkey)]
     (codeseq
-     (compile-expr test-expr state)
+     state
+     [:subexpr test-expr]
      ['cmp :ax (repr/immediate false)]
      ['je l0]
      ['cmp :ax (repr/immediate nil)]
      ['je l0]
-     (compile-expr then-expr state)
+     [:subexpr then-expr]
      ['jmp l1]
      l0
-     (compile-expr else-expr state)
+     [:subexpr else-expr]
      l1)))
 
 (defn compile-call
-  [expr args {:keys [environment] :as state}]
-  (codeseq
-   (compile-expr expr state)
-   ['push :di]
-   ['mov :di :ax]
-   (map-indexed
-    (fn [i expr]
-      (codeseq
-       (compile-expr expr (update state :stack-pointer - (* repr/wordsize (inc i))))
-       ['push :ax]))
-    (reverse args))
-   ['mov :bx :di]
-   ['call [:bx (- repr/closure-tag)]]
-   ['add :sp (* repr/wordsize (count args))]
-   ['pop :di]))
+  [expr args orig-state]
+  (as-> orig-state state
+    (codeseq
+     state
+     [:subexpr expr]
+     ['push :di]
+     ['mov :di :ax])
+    (reduce
+     #(codeseq
+       (compile-expr %2 (update %1 :stack-pointer - repr/wordsize))
+       ['push :ax])
+     state
+     (reverse args))
+    (codeseq
+     state
+     ['mov :bx :di]
+     ['call [:bx (- repr/closure-tag)]]
+     ['add :sp (* repr/wordsize (count args))]
+     ['pop :di])
+    (state/restore-env orig-state state)))
 
 (defn compile-labels
-  [labels code state]
-  (let [body-label (genkey)
-        body-res   (compile-expr code state)
-        code       (codeseq
-                    ['jmp body-label]
-                    (for [{:keys [label args bound-vars body]} labels]
-                      (codeseq
-                       (keyword (name label))
-                       ['push :bp]
-                       ['mov :bp :sp]
-                       ['sub :sp 16]
-                       (let [arg-env  (map-indexed (fn [i x]
-                                                     (make-environment-element x :bound (* repr/wordsize (+ i 2)))) args)
-                             fvar-env (map-indexed (fn [i x]
-                                                     (make-environment-element x :free (* repr/wordsize (inc i)))) bound-vars)]
-                         (compile-expr (first body)  ; FIXME needs multi-expr support
-                                       (-> state
-                                           (update :stack-pointer - (* repr/wordsize (count args)))
-                                           (update :environment into (concat arg-env fvar-env)))))
-                       ['mov :sp :bp]
-                       ['pop :bp]
-                       ['ret]))
-                    body-label
-                    (if (map? body-res) (:code body-res) body-res))]
-    (if (map? body-res)
-      (assoc body-res :code code)
-      code)))
-
-(def initial-compilation-state
-  {:code []
-   :stack-pointer (- repr/wordsize)
-   :global-env-start (- 0x10000 repr/wordsize)
-   :environment {}
-   :recur-point nil})
+  [labels code orig-state]
+  (let [body-label (genkey)]
+    (as-> orig-state state
+      (codeseq
+       state
+       ['jmp body-label])
+      (reduce (fn [state {:keys [label args bound-vars body]}]
+                (codeseq
+                 state
+                 (keyword (name label))
+                 ['push :bp]
+                 ['mov :bp :sp]
+                 ['sub :sp 16]
+                 (let [arg-env  (map-indexed (fn [i x]
+                                               (make-environment-element x :bound (* repr/wordsize (+ i 2)))) args)
+                       fvar-env (map-indexed (fn [i x]
+                                               (make-environment-element x :free (* repr/wordsize (inc i)))) bound-vars)]
+                   [:subexpr
+                    (first body) ; FIXME needs multi-expr support
+                    #(-> %
+                         (update :stack-pointer - (* repr/wordsize (count args)))
+                         (update :environment into (concat arg-env fvar-env)))])
+                 ['mov :sp :bp]
+                 ['pop :bp]
+                 ['ret]))
+              state
+              labels)
+      (codeseq
+       state
+       body-label
+       [:subexpr code
+        identity
+        (fn [orig-state state]
+          (assoc (state/restore-env orig-state state)
+                 :environment (:environment state)
+                 :global-env-start (:global-env-start state)))]))))
 
 (defn compile-var-access
-  [symbol environment]
+  [symbol {:keys [environment] :as state}]
   (let [{:keys [type offset]} (environment symbol)]
     (condp = type
-      :bound [['mov :ax [:bp offset]]]
-      :free  [['mov :bx :di]
-              ['mov :ax [:bx (- offset repr/closure-tag)]]]
-      :var   [['mov :ax [offset]]]
+      :bound (codeseq state ['mov :ax [:bp offset]])
+      :free  (codeseq state
+                      ['mov :bx :di]
+                      ['mov :ax [:bx (- offset repr/closure-tag)]])
+      :var   (codeseq state ['mov :ax [offset]])
       (throw (Exception. (str "Unbound variable: " symbol))))))
 
 (defn compile-def
-  [symbol expr {:keys [stack-pointer environment global-env-start] :as state}]
-  {:code (codeseq
-          (:code state)
-          (compile-expr expr state)
-          ['mov [global-env-start] :ax]
-          ['sub :sp 2]
-          ['sub :bp 2]),
-   :environment (conj environment (make-environment-element symbol :var global-env-start)),
-   :stack-pointer stack-pointer,
-   :global-env-start (- global-env-start repr/wordsize)})
+  [symbol expr {:keys [stack-pointer global-env-start] :as state}]
+  (-> (codeseq
+       state
+       [:subexpr expr]
+       ['mov [global-env-start] :ax]
+       ['sub :sp 2]
+       ['sub :bp 2])
+      (update :environment conj (make-environment-element symbol :var global-env-start))
+      (update :global-env-start - repr/wordsize)))
 
 (defn compile-closure
-  [label free-vars state]
-  (codeseq
-   ['mov [:si] (-> label name keyword)]
-   ['add :si repr/wordsize]
-   (for [fvar free-vars]
-     [(compile-expr {:type :env-lookup, :symbol fvar} state)
-      ['mov [:si] :ax]
-      ['add :si repr/wordsize]])
-   ['mov :ax :si]
-   ['sub :ax (* repr/wordsize (inc (count free-vars)))]
-   ['or :ax repr/closure-tag]
-   ['add :si 7]
-   ['and :si 0xfff8]))
+  [label free-vars orig-state]
+  (as-> orig-state state
+    (codeseq state
+     ['mov [:si] (-> label name keyword)]
+     ['add :si repr/wordsize])
+    (reduce (fn [state fvar]
+              (codeseq
+               state
+               [:subexpr {:type :env-lookup, :symbol fvar}]
+               ['mov [:si] :ax]
+               ['add :si repr/wordsize]))
+            state free-vars)
+    (codeseq
+     state
+     ['mov :ax :si]
+     ['sub :ax (* repr/wordsize (inc (count free-vars)))]
+     ['or :ax repr/closure-tag]
+     ['add :si 7]
+     ['and :si 0xfff8])))
 
-(defn add-comment
-  [comm res]
-  (if (map? res)
-    (update-in res [:code] #(vec (cons ['comment comm] %)))
-    (vec (cons ['comment comm] res))))
-
-(defn compile-value [{:keys [value]}]
-  [['mov :ax (repr/immediate value)]])
+(defn compile-value [{:keys [value]} state]
+  (codeseq state
+           ['mov :ax (repr/immediate value)]))
 
 (defn compile-expr*
   [ast state]
-  (let [res (ast/match ast
-              :value []                           (compile-value ast)
-              :env-lookup [symbol]                (compile-var-access symbol (:environment state))
-              :primitive-call [primitive args]    ((primitives/primitives primitive) state args)
-              :def [symbol definition]            (compile-def symbol definition state)
-              :let [bindings body]                (compile-let bindings body false state)
-              :loop [bindings body]               (compile-let bindings body true (assoc state :recur-point (genkey)))
-              :if [condition then-expr else-expr] (compile-if condition then-expr else-expr state)
-              :do [exprs]                         (apply concat (map #(compile-expr % state) exprs))
-              :fn-call [fn-expr args]             (compile-call fn-expr args state)
-              :labels [labels body]               (compile-labels labels body state)
-              :closure [label vars]               (compile-closure label vars state)
-              (throw (ex-info "Unable to compile" ast)))]
-    (if (map? res)
-      (update res :code #(into [['comment (ast/ast->clojure ast)]] %))
-      (into [['comment (ast/ast->clojure ast)]] res))))
+  (let [state (codeseq state ['comment (ast/ast->clojure ast)])]
+    (ast/match ast
+      :value []                           (compile-value ast state)
+      :env-lookup [symbol]                (compile-var-access symbol state)
+      :primitive-call [primitive args]    ((primitives/primitives primitive) state args)
+      :def [symbol definition]            (compile-def symbol definition state)
+      :let [bindings body]                (compile-let bindings body false state)
+      :loop [bindings body]               (compile-let bindings body true (assoc state :recur-point (genkey)))
+      :if [condition then-expr else-expr] (compile-if condition then-expr else-expr state)
+      :do [exprs]                         (reduce #(compile-expr %2 %1) state exprs)
+      :fn-call [fn-expr args]             (compile-call fn-expr args state)
+      :labels [labels body]               (compile-labels labels body state)
+      :closure [label vars]               (compile-closure label vars state)
+      (throw (ex-info "Unable to compile" ast)))))
 
 (alter-var-root #'compile-expr (constantly compile-expr*))
+
+(defn prepare-sexp [sexp]
+  (-> sexp
+      ast/clojure->ast
+      closure/free-variable-analysis
+      closure/collect-closures))
+
+(defn compile-sexp
+  [state sexp]
+  (-> sexp
+      prepare-sexp
+      (compile-expr state)))
 
 (defn compile-program*
   [sexps]
   (reduce
-   (fn [{:keys [code env stack-start] :as state} sexp]
-     (let [res (-> sexp
-                   ast/clojure->ast
-                   closure/free-variable-analysis
-                   closure/collect-closures
-                   (compile-expr state))]
-       (if (map? res)
-         (into state res)
-         (update state :code concat res))))
-   initial-compilation-state
+   compile-sexp
+   state/initial-compilation-state
    sexps))
 
 (defn compile-program
