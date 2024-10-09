@@ -1,7 +1,7 @@
 (ns lithium.compiler.primitives
   (:require
    [lithium.compiler.repr :as repr]
-   [lithium.compiler.state :as state]
+   [lithium.compiler.state :refer [next-loc] :as state]
    [lithium.compiler.code :refer [codeseq compile-expr genkey]]))
 
 (def primitives {})
@@ -17,7 +17,7 @@
    state
    [:subexpr b]
    ['mov [:bp (:stack-pointer state)] :ax]
-   [:subexpr a #(update % :stack-pointer - repr/wordsize)]
+   [:subexpr a next-loc]
    ['add :ax [:bp (:stack-pointer state)]]))
 
 (defprimitive - [a b]
@@ -25,7 +25,7 @@
    state
    [:subexpr b]
    ['mov [:bp (:stack-pointer state)] :ax]
-   [:subexpr a #(update % :stack-pointer - repr/wordsize)]
+   [:subexpr a next-loc]
    ['sub :ax [:bp (:stack-pointer state)]]))
 
 (defprimitive * [a b]
@@ -34,7 +34,7 @@
    [:subexpr b]
    ['sar :ax 2]
    ['mov [:bp (:stack-pointer state)] :ax]
-   [:subexpr a #(update % :stack-pointer - repr/wordsize)]
+   [:subexpr a next-loc]
    ['mul [:word :bp (:stack-pointer state)]]))
 
 (defprimitive mod [a b]
@@ -43,7 +43,7 @@
    [:subexpr b]
    ['sar :ax 2]
    ['mov [:bp (:stack-pointer state)] :ax]
-   [:subexpr a #(update % :stack-pointer - repr/wordsize)]
+   [:subexpr a next-loc]
    ['mov :dx 0]
    ['sar :ax 2]
    ['div [:word :bp (:stack-pointer state)]]
@@ -56,7 +56,7 @@
    [:subexpr b]
    ['sar :ax 2]
    ['mov [:bp (:stack-pointer state)] :ax]
-   [:subexpr a #(update % :stack-pointer - repr/wordsize)]
+   [:subexpr a next-loc]
    ['mov :dx 0]
    ['sar :ax 2]
    ['div [:word :bp (:stack-pointer state)]]
@@ -68,7 +68,7 @@
      state
      [:subexpr b]
      ['mov [:bp (:stack-pointer state)] :ax]
-     [:subexpr a #(update % :stack-pointer - repr/wordsize)]
+     [:subexpr a next-loc]
      ['cmp :ax [:bp (:stack-pointer state)]]
      ['jne l1]
      ['mov :ax (repr/immediate true)]
@@ -82,7 +82,7 @@
    state
    [:subexpr b]
    ['mov [:bp (:stack-pointer state)] :ax]
-   [:subexpr a #(update % :stack-pointer - repr/wordsize)]
+   [:subexpr a next-loc]
    ['xor :bx :bx]
    ['cmp :ax [:bp (:stack-pointer state)]]
    ['setb :bl]
@@ -145,7 +145,7 @@
                  state
                  [:subexpr expr]
                  ['mov [:bp (:stack-pointer state)] :ax]
-                 #(update % :stack-pointer - repr/wordsize)))
+                 next-loc))
               state
               exprs)
       (state/restore-env orig-state state)

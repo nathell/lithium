@@ -9,6 +9,9 @@
    :recur-point nil
    :min-sp (- repr/wordsize)})
 
+(defn next-loc [state]
+  (update state :stack-pointer - repr/wordsize))
+
 (defn restore-env [orig-state state]
   (into orig-state
         {:code (:code state)

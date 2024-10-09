@@ -79,7 +79,7 @@
            (codeseq
             [:subexpr expr]
             ['mov [:bp stack-pointer] :ax])
-           (update :stack-pointer - 2)
+           state/next-loc
            (update :environment conj (make-environment-element symbol :bound stack-pointer))))
      state
      bindings)
@@ -88,9 +88,6 @@
       state)
     (reduce #(codeseq %1 [:subexpr %2]) state body)
     (state/restore-env orig-state state)))
-
-(defn variable? [x]
-  (symbol? x))
 
 (defn compile-if
   [test-expr then-expr else-expr state]
@@ -118,7 +115,7 @@
      ['mov :di :ax])
     (reduce
      #(codeseq
-       (compile-expr %2 (update %1 :stack-pointer - repr/wordsize))
+       (compile-expr %2 (state/next-loc %1))
        ['push :ax])
      state
      (reverse args))
