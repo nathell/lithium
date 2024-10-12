@@ -10,9 +10,11 @@
    :min-sp (- repr/wordsize)})
 
 (defn next-loc [state]
-  (update state :stack-pointer - repr/wordsize))
+  (as-> state state
+    (update state :stack-pointer - repr/wordsize)
+    (update state :min-sp min (:stack-pointer state))))
 
 (defn restore-env [orig-state state]
-  (into orig-state
-        {:code (:code state)
-         :min-sp (min (:min-sp orig-state) (:stack-pointer state))}))
+  (assoc orig-state
+         :code (:code state)
+         :min-sp (min (:min-sp orig-state) (:min-sp state) (:stack-pointer state))))

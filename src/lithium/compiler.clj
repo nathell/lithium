@@ -78,8 +78,8 @@
        (-> state
            (codeseq
             [:subexpr expr]
-            ['mov [:bp stack-pointer] :ax])
-           state/next-loc
+            ['mov [:bp stack-pointer] :ax]
+            state/next-loc)
            (update :environment conj (make-environment-element symbol :bound stack-pointer))))
      state
      bindings)
@@ -148,13 +148,15 @@
                    [:subexpr
                     (first body) ; FIXME needs multi-expr support
                     #(-> %
-                         (update :stack-pointer - (* repr/wordsize (count args)))
+                         (assoc :stack-pointer (- repr/wordsize)
+                                :min-sp (- repr/wordsize))
                          (update :environment into (concat arg-env fvar-env)))])
                  ['mov :sp :bp]
                  ['pop :bp]
                  ['ret]))
               state
               labels)
+      (assoc state :min-sp (:min-sp orig-state))
       (codeseq
        state
        body-label

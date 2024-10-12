@@ -4,14 +4,16 @@
 
 (declare compile-expr)
 
-(defn combine [state new-instr-or-state]
-  (cond (and (sequential? new-instr-or-state) (= (first new-instr-or-state) ':subexpr))
-        (let [[_ expr state-modifier restore-fn] new-instr-or-state]
-          ((or restore-fn state/restore-env)
-           state
-           (compile-expr expr (cond-> state state-modifier state-modifier))))
-        (fn? new-instr-or-state) (new-instr-or-state state)
-        :else (update state :code conj new-instr-or-state)))
+(defn combine [state instr]
+  (cond (and (sequential? instr) (= (first instr) ':subexpr))
+        #_=> (let [[_ expr state-modifier restore-fn] instr
+                   orig-state state
+                   state (cond-> state state-modifier state-modifier)
+                   state (compile-expr expr state)]
+               ((or restore-fn state/restore-env) orig-state state))
+        (fn? instr)
+        #_=> (instr state)
+        :else (update state :code conj instr)))
 
 (defn codeseq [state & code]
   (reduce combine state code))
