@@ -16,7 +16,7 @@
    ['mov :si :heap-start]
    ['add :si 7]
    ['and :si 0xfff8]
-   ['sub :sp 16]]) ;; reserve some space between bp and sp for temporary values
+   [:reserve-tmp-space]])  ;; reserve some space between bp and sp for temporary values
 
 (def endless-loop-epilog
   [:forever
@@ -115,7 +115,7 @@
      ['mov :di :ax])
     (reduce
      #(codeseq
-       (compile-expr %2 (state/next-loc %1))
+       (compile-expr %2 %1)
        ['push :ax])
      state
      (reverse args))
@@ -140,19 +140,20 @@
                  (keyword (name label))
                  ['push :bp]
                  ['mov :bp :sp]
-                 ['sub :sp 16]
+                 [:reserve-tmp-space]
                  (let [arg-env  (map-indexed (fn [i x]
                                                (make-environment-element x :bound (* repr/wordsize (+ i 2)))) args)
                        fvar-env (map-indexed (fn [i x]
                                                (make-environment-element x :free (* repr/wordsize (inc i)))) bound-vars)]
                    [:subexpr
-                    (first body) ; FIXME needs multi-expr support
+                    (first body)      ; FIXME needs multi-expr support
                     #(-> %
                          (assoc :stack-pointer (- repr/wordsize)
                                 :min-sp (- repr/wordsize))
                          (update :environment into (concat arg-env fvar-env)))])
                  ['mov :sp :bp]
                  ['pop :bp]
+                 #(update % :code conj [:set-tmp-space (- (- repr/wordsize) (:min-sp %))])
                  ['ret]))
               state
               labels)
@@ -252,13 +253,29 @@
    state/initial-compilation-state
    sexps))
 
+(defn add-tmp-spaces
+  [asm]
+  (let [spaces (map second (filter #(and (sequential? %) (= (first %) :set-tmp-space)) asm))
+        spaces (into [(last spaces)] (drop-last spaces))]
+    (first
+     (reduce (fn [[code spaces] instr]
+               (cond
+                 (and (sequential? instr) (= (first instr) :set-tmp-space)) [code spaces]
+                 (= instr [:reserve-tmp-space]) [(conj code ['sub :sp (first spaces)]) (next spaces)]
+                 :else [(conj code instr) spaces]))
+             [[] spaces]
+             asm))))
+
 (defn compile-program
   [prog & [{:keys [epilog]
             :or {epilog endless-loop-epilog}}]]
-  (concat prolog
-          (:code (compile-program* (read-all prog)))
-          epilog
-          [:heap-start]))
+  (let [state (compile-program* (read-all prog))
+        asm (concat prolog
+                    (:code state)
+                    [[:set-tmp-space (- (- repr/wordsize) (:min-sp state))]]
+                    epilog
+                    [:heap-start])]
+    (add-tmp-spaces asm)))
 
 (defn compile-and-run!
   ([f] (compile-and-run! f dos-exit-epilog))
