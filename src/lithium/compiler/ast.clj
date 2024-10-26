@@ -49,6 +49,7 @@
     (int? expr) {:type :value, :value-type :int, :value expr}
     (boolean? expr) {:type :value, :value-type :boolean, :value expr}
     (char? expr) {:type :value, :value-type :char, :value expr}
+    (string? expr) {:type :value, :value-type :string, :value expr}
     (symbol? expr) {:type :env-lookup, :symbol expr}
     (nil? expr) {:type :value, :value-type :nil, :value nil}
     :otherwise {:type :unrecognized
@@ -56,12 +57,13 @@
 
 (defn type-matches?
   "A helper for match. See below."
-  [specifier type]
+  [specifier ast]
   (if (keyword? specifier)
-    (= type specifier)
-    (specifier type)))
+    (= (:type ast) specifier)
+    (specifier ast)))
 
-(def let-like #{:let :loop})
+(defn let-like [{:keys [type]}]
+  (contains? #{:let :loop} type))
 
 (defmacro match
   "Evaluates one of the clauses depending on the type of the given AST node.
@@ -85,7 +87,7 @@
         transformed-clauses (for [[name bindings body] (partition 3 clauses)]
                               [name `(let [{:keys ~bindings} ~ast-sym] ~body)])]
     `(let [~ast-sym ~ast]
-       (condp type-matches? (:type ~ast-sym)
+       (condp type-matches? ~ast-sym
          ~@(apply concat transformed-clauses)
          ~(or (when-not (zero? (mod (count clauses) 3))
                 (last clauses))
@@ -109,10 +111,13 @@
          ;; after closure analysis:
          :closure [label vars] `(~'closure ~label ~@vars)
          :code [args bound-vars body] `(~'code ~args ~bound-vars ~@(map ast->clojure body))
-         :labels [labels body] `(~'labels ~(vec (mapcat (fn [{:keys [label] :as code}]
-                                                          [label (ast->clojure code)])
-                                                        labels))
-                                 ~(ast->clojure body))))
+         :heap-ref [ref] `(~'heap-ref ~ref)
+         :labels [labels heap-values body] `(~'labels
+                                             ~(vec (mapcat (fn [{:keys [label] :as code}]
+                                                             [label (ast->clojure code)])
+                                                           labels))
+                                             ~heap-values
+                                             ~(ast->clojure body))))
 
 (defn expr-update
   "Applies f to every sub-expression of ast, returning the updated ast."

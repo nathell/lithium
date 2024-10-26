@@ -1,5 +1,6 @@
 (ns lithium.compiler.closure
-  (:require [lithium.compiler.ast :as ast]))
+  (:require [lithium.compiler.ast :as ast]
+            [lithium.compiler.code :refer [genkey]]))
 
 (defn free-variable-analysis [ast]
   (ast/walk
@@ -27,15 +28,25 @@
                 (ast/expr-update ast assoc :bound-vars (:bound-vars ast))))
    identity))
 
+(defn long-value?
+  "Returns true if ast represents a 'long value', i.e. one whose content can't fit into a register."
+  [ast]
+  (and (= (:type ast) :value)
+       (= (:value-type ast) :string)))
+
 (defn collect-closures [ast]
   (let [codes (atom [])
+        long-values (atom {})
         outer-xform (fn [ast]
                       (ast/match ast
-                                 :fn [args body bound-vars]
-                                 (let [label (gensym "cl")]
-                                   (swap! codes conj {:type :code, :label label, :args args, :bound-vars bound-vars, :body body})
-                                   {:type :closure, :label label, :vars bound-vars})))
+                        long-value? [value value-type]
+                        #_=> (let [ref (get (swap! long-values update value #(or % {:value-type value-type, :ref (genkey)})) value)]
+                               (merge {:type :long-value-ref} ref))
+                        :fn [args body bound-vars]
+                        #_=> (let [label (gensym "cl")]
+                               (swap! codes conj {:type :code, :label label, :args args, :bound-vars bound-vars, :body body})
+                               {:type :closure, :label label, :vars bound-vars})))
         transformed (ast/walk ast identity outer-xform)]
-    (if (seq @codes)
-      {:type :labels, :labels @codes, :body transformed}
+    (if (or (seq @codes) (seq @long-values))
+      {:type :labels, :labels @codes, :long-values @long-values, :body transformed}
       transformed)))
