@@ -206,10 +206,15 @@
      (and (sequential? byte-desc) (= (first byte-desc) :cc+))
        [(+ (second byte-desc) (-> instr (extract-cc instr-template) +condition-codes+))])))
 
-(defn assemble-instruction [instr]
+(defn assemble-instruction [instr pc]
   (cond
     (= (first instr) 'string) (map int (second instr))
     (= (first instr) 'bytes) (second instr)
+    (= (first instr) 'align) (let [boundary (second instr)
+                                   used (mod pc boundary)]
+                               (if (zero? used)
+                                 []
+                                 (repeat (- boundary used) 0)))
     :otherwise
     (let [[template parts] (find-template instr)]
       (when-not template (throw (Exception. (str "Could not assemble instruction: " (pr-str instr)))))
@@ -243,7 +248,7 @@
       (let [ins (first prog)]
         (if (keyword? ins)
           (recur (next prog) code pc (assoc labels ins pc))
-          (let [assembled (assemble-instruction ins)
+          (let [assembled (assemble-instruction ins pc)
                 cnt (count assembled)]
             (recur (next prog) (into code assembled) (+ pc cnt) labels)))))))
 
