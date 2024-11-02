@@ -198,3 +198,26 @@
    [:subexpr x]
    ['sal :ax 6]
    ['mov :al repr/char-tag]))
+
+(defprimitive strlen [x]
+  (codeseq
+   state
+   [:subexpr x]
+   ['mov :bx :ax]
+   ['sub :bx repr/string-tag]
+   ['xor :ax :ax]
+   ['mov :al [:bx]]
+   ['sal :ax 2]))
+
+(defprimitive char-at [s i]
+  (codeseq
+   state
+   [:subexpr s]
+   ['mov :bx :ax]
+   ['sub :bx repr/string-tag]
+   [:subexpr i]
+   ['sar :ax 2]
+   ['inc :ax]
+   ['add :bx :ax]
+   ['mov :ah [:bx]]
+   ['mov :al repr/char-tag]))

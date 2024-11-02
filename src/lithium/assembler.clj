@@ -47,8 +47,8 @@
 (defn reg16 [x] (let [info (+registers+ x)] (and info (= (:type info) :general) (= (:size info) 16))))
 (defn sreg  [x] (let [info (+registers+ x)] (and info (= (:type info) :segment))))
 (defn imm8  [x] (and (integer? x) (<= 0 x 255)))
-(defn imm16 [x] (or (and (integer? x) (<= 0 x 65535)) (keyword? x)))
-(defn mem   [x] (vector? x))
+(defn imm16 [x] (or (and (integer? x) (<= 0 x 65535)) (keyword? x) (and (vector? x) (= (first x) :+))))
+(defn mem   [x] (and (vector? x) (not= (first x) :+)))
 (defn width [x] (first (filter +memory-widths+ x)))
 (defn mem8  [x] (and (mem x) (let [w (width x)] (or (nil? w) (= w :byte)))))
 (defn mem16 [x] (and (mem x) (let [w (width x)] (or (nil? w) (= w :word)))))
@@ -152,19 +152,21 @@
   (first (filter (partial instruction-matches? instr)
                  (partition 2 assembly-table))))
 
-(defn make-label [label width]
-  (keyword (or (namespace label) (name width)) (name label)))
+(defn make-label [label type]
+  {:label label, :type type})
 
 (defn label?
-  ([x] (keyword? x))
-  ([x type] (and (keyword? x) (= (namespace x) (name type)))))
+  ([x] (and (map? x) (:label x)))
+  ([x type] (and (label? x) (= (:type x) type))))
 
 (defn word-to-bytes [[size w]]
   (let [w (if (and (integer? w) (neg? w)) (+ w (bit-shift-left 1 size)) w)]
-    (condp = size
-        0 []
-        8 [w]
-        16 (if (keyword? w) [:placeholder (make-label w :abs)] [(bit-and w 0xff) (bit-shift-right w 8)]))))
+    (case size
+      0  []
+      8  [w]
+      16 (cond (keyword? w) [:placeholder (make-label w :abs)]
+               (vector? w)  [:placeholder {:label (second w), :type :abs, :displacement (last w)}]
+               :else        [(bit-and w 0xff) (bit-shift-right w 8)]))))
 
 (defn lenient-parse-int [x]
   (try
@@ -206,10 +208,15 @@
      (and (sequential? byte-desc) (= (first byte-desc) :cc+))
        [(+ (second byte-desc) (-> instr (extract-cc instr-template) +condition-codes+))])))
 
-(defn assemble-instruction [instr]
+(defn assemble-instruction [instr pc]
   (cond
     (= (first instr) 'string) (map int (second instr))
     (= (first instr) 'bytes) (second instr)
+    (= (first instr) 'align) (let [boundary (second instr)
+                                   used (mod pc boundary)]
+                               (if (zero? used)
+                                 []
+                                 (repeat (- boundary used) 0)))
     :otherwise
     (let [[template parts] (find-template instr)]
       (when-not template (throw (Exception. (str "Could not assemble instruction: " (pr-str instr)))))
@@ -226,9 +233,9 @@
     (if-let [fb (first code)]
       (recur
        (cond (= fb :placeholder) result
-             (label? fb :byte)   (into result (word-to-bytes [8 (dec (- (-> fb name keyword labels) pos))]))
-             (label? fb :word)   (into result (word-to-bytes [16 (dec (- (-> fb name keyword labels) pos))]))
-             (label? fb :abs)    (into result (word-to-bytes [16 (+ *origin* (-> fb name keyword labels))]))
+             (label? fb :byte)   (into result (word-to-bytes [8 (dec (- (-> fb :label labels) pos))]))
+             (label? fb :word)   (into result (word-to-bytes [16 (dec (- (-> fb :label labels) pos))]))
+             (label? fb :abs)    (into result (word-to-bytes [16 (+ *origin* (-> fb :label labels) (:displacement fb 0))]))
              :otherwise          (conj result fb))
        (next code) (inc pos))
       result)))
@@ -243,7 +250,7 @@
       (let [ins (first prog)]
         (if (keyword? ins)
           (recur (next prog) code pc (assoc labels ins pc))
-          (let [assembled (assemble-instruction ins)
+          (let [assembled (assemble-instruction ins pc)
                 cnt (count assembled)]
             (recur (next prog) (into code assembled) (+ pc cnt) labels)))))))
 

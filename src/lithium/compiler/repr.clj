@@ -1,11 +1,14 @@
 (ns lithium.compiler.repr)
 
 (def nil-tag 2r00101111)
+(def string-tag 2r011)
 (def boolean-tag 2r0011111)
 (def char-tag 2r00001111)
 (def cons-tag 2r001)
 (def closure-tag 2r110)
 (def wordsize 2)
+
+(def type->tag {:string string-tag})
 
 (defn immediate [x]
   (cond

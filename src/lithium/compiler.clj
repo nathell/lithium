@@ -127,13 +127,23 @@
      ['pop :di])
     (state/restore-env orig-state state)))
 
+(defn compile-long-value
+  [state [val {:keys [ref value-type]}]]
+  (as-> state state
+    (codeseq state ['align 8] ref)
+    (case value-type
+      :string (codeseq state ['bytes [(count val)]] ['string val]))))
+
 (defn compile-labels
-  [labels code orig-state]
+  [labels long-values code orig-state]
   (let [body-label (genkey)]
     (as-> orig-state state
       (codeseq
        state
        ['jmp body-label])
+      (reduce compile-long-value
+              state
+              long-values)
       (reduce (fn [state {:keys [label args bound-vars body]}]
                 (codeseq
                  state
@@ -215,6 +225,9 @@
   (codeseq state
            ['mov :ax (repr/immediate value)]))
 
+(defn compile-long-value-ref [ref value-type state]
+  (codeseq state ['mov :ax [:+ ref (repr/type->tag value-type)]]))
+
 (defn compile-expr*
   [ast state]
   (let [state (codeseq state ['comment (ast/ast->clojure ast)])]
@@ -228,8 +241,9 @@
       :if [condition then-expr else-expr] (compile-if condition then-expr else-expr state)
       :do [exprs]                         (reduce #(compile-expr %2 %1) state exprs)
       :fn-call [fn-expr args]             (compile-call fn-expr args state)
-      :labels [labels body]               (compile-labels labels body state)
+      :labels [labels long-values body]   (compile-labels labels long-values body state)
       :closure [label vars]               (compile-closure label vars state)
+      :long-value-ref [ref value-type]    (compile-long-value-ref ref value-type state)
       (throw (ex-info "Unable to compile" ast)))))
 
 (alter-var-root #'compile-expr (constantly compile-expr*))
