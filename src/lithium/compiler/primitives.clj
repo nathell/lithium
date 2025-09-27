@@ -209,6 +209,12 @@
    ['mov :al [:bx]]
    ['sal :ax 2]))
 
+(defprimitive symbol->string [x]
+  (codeseq
+   state
+   [:subexpr x]
+   ['sub :ax (- repr/symbol-tag repr/string-tag)]))
+
 (defprimitive char-at [s i]
   (codeseq
    state

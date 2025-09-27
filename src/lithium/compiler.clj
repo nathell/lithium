@@ -132,7 +132,9 @@
   (as-> state state
     (codeseq state ['align 8] ref)
     (case value-type
-      :string (codeseq state ['bytes [(count val)]] ['string val]))))
+      :keyword (let [s (pr-str val)]
+                 (codeseq state ['bytes [(count s)]] ['string s]))
+      :string  (codeseq state ['bytes [(count val)]] ['string val]))))
 
 (defn compile-labels
   [labels long-values code orig-state]

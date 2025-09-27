@@ -8,7 +8,7 @@
             (write-char (char-at s i))
             (recur (inc i))))))))
 
-(write-string "Life")
-(write-string " is ")
-(write-string "life\r\n")
+(write-string "Life ")
+(write-string (symbol->string :is))
+(write-string " life\r\n")
 (write-string "NaNaNaNaNa!\r\n")

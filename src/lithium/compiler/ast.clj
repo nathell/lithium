@@ -50,6 +50,7 @@
     (boolean? expr) {:type :value, :value-type :boolean, :value expr}
     (char? expr) {:type :value, :value-type :char, :value expr}
     (string? expr) {:type :value, :value-type :string, :value expr}
+    (keyword? expr) {:type :value, :value-type :keyword, :value expr}
     (symbol? expr) {:type :env-lookup, :symbol expr}
     (nil? expr) {:type :value, :value-type :nil, :value nil}
     :otherwise {:type :unrecognized

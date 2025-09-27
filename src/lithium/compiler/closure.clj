@@ -32,7 +32,7 @@
   "Returns true if ast represents a 'long value', i.e. one whose content can't fit into a register."
   [ast]
   (and (= (:type ast) :value)
-       (= (:value-type ast) :string)))
+       (contains? #{:string :keyword} (:value-type ast))))
 
 (defn collect-closures [ast]
   (let [codes (atom [])
