@@ -230,6 +230,33 @@
 (defn compile-long-value-ref [ref value-type state]
   (codeseq state ['mov :ax [:+ ref (repr/type->tag value-type)]]))
 
+(defn align [n to]
+  (let [m (mod n to)]
+    (if (zero? m)
+      n
+      (+ n (- to m)))))
+
+(defn compile-vector [state elements]
+  (as-> state state
+    (codeseq
+     state
+     ['push :di]
+     ['mov :di :si]
+     ['add :si (* 2 (align (inc (count elements)) 4))]
+     ['mov [:word :di] (repr/immediate (count elements))])
+    (reduce (fn [state [i element]]
+              (codeseq
+               state
+               [:subexpr element]
+               ['mov [:word :di (* 2 (inc i))] :ax]))
+            state
+            (map-indexed vector elements))
+    (codeseq
+     state
+     ['mov :ax :di]
+     ['add :ax repr/vector-tag]
+     ['pop :di])))
+
 (defn compile-expr*
   [ast state]
   (let [state (codeseq state ['comment (ast/ast->clojure ast)])]
@@ -245,6 +272,7 @@
       :fn-call [fn-expr args]             (compile-call fn-expr args state)
       :labels [labels long-values body]   (compile-labels labels long-values body state)
       :closure [label vars]               (compile-closure label vars state)
+      :vector [elements]                  (compile-vector state elements)
       :long-value-ref [ref value-type]    (compile-long-value-ref ref value-type state)
       (throw (ex-info "Unable to compile" ast)))))
 

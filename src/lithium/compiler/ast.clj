@@ -52,6 +52,7 @@
     (string? expr) {:type :value, :value-type :string, :value expr}
     (keyword? expr) {:type :value, :value-type :keyword, :value expr}
     (symbol? expr) {:type :env-lookup, :symbol expr}
+    (vector? expr) {:type :vector, :elements (map clojure->ast expr)}
     (nil? expr) {:type :value, :value-type :nil, :value nil}
     :otherwise {:type :unrecognized
                 :expr expr}))
@@ -105,6 +106,7 @@
          :unrecognized [expr] expr
          :fn [args bound-vars body] `(~'fn ~@(when bound-vars [{:bound-vars bound-vars}]) ~args ~@(map ast->clojure body))
          :def [symbol definition] `(~'def ~symbol ~(ast->clojure definition))
+         :vector [elements] (mapv ast->clojure elements)
          let-like [type bindings body] `(~(symbol (name type))
                                          ~(vec (apply concat (for [{:keys [symbol expr]} bindings]
                                                                [symbol (ast->clojure expr)])))
