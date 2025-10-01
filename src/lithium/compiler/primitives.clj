@@ -227,3 +227,46 @@
    ['add :bx :ax]
    ['mov :ah [:bx]]
    ['mov :al repr/char-tag]))
+
+(defprimitive vector-length [v]
+  (codeseq
+   state
+   [:subexpr v]
+   ['mov :bx :ax]
+   ['sub :bx repr/vector-tag]
+   ['mov :ax [:bx]]))
+
+(defprimitive vector-at [v n]
+  (codeseq
+   state
+   [:subexpr v]
+   ;; the tag for vectors is 2 and we should first subtract it
+   ;; from ax, then skip again by 2 omitting the length field –
+   ;; this cancels out
+   ['mov :bx :ax]
+   [:subexpr n]
+   ['sar :ax 1]
+   ['add :bx :ax]
+   ['mov :ax [:bx]]))
+
+(defmacro deftypecheck [name tag-width tag]
+  `(defprimitive ~name [x#]
+     (let [l1# (genkey)]
+       (codeseq
+        ~'state
+        [:subexpr x#]
+        ['and :ax ~(dec (bit-shift-left 1 tag-width))]
+        ['cmp :ax ~tag]
+        ['mov :ax (repr/immediate false)]
+        ['jne l1#]
+        ['add :ax 128]
+        l1#))))
+
+(deftypecheck number? 2 repr/number-tag)
+(deftypecheck vector? 3 repr/vector-tag)
+(deftypecheck fn? 3 repr/closure-tag)
+(deftypecheck cons? 3 repr/cons-tag)
+(deftypecheck string? 3 repr/string-tag)
+(deftypecheck keyword? 3 repr/symbol-tag)
+(deftypecheck char? 8 repr/symbol-tag)
+(deftypecheck boolean? 7 repr/boolean-tag)

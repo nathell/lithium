@@ -139,6 +139,7 @@
           :fn-call [] (-> ast
                           (update :fn-expr f)
                           (update :args (partial mapv f)))
+          :vector [] (update ast :elements (partial mapv f))
           :fn [] (update ast :body (partial mapv f))))
   ([ast f arg & args] (expr-update ast #(apply f % arg args))))
 

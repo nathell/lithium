@@ -46,8 +46,8 @@
 (defn reg8  [x] (let [info (+registers+ x)] (and info (= (:type info) :general) (= (:size info) 8))))
 (defn reg16 [x] (let [info (+registers+ x)] (and info (= (:type info) :general) (= (:size info) 16))))
 (defn sreg  [x] (let [info (+registers+ x)] (and info (= (:type info) :segment))))
-(defn imm8  [x] (and (integer? x) (<= 0 x 255)))
-(defn imm16 [x] (or (and (integer? x) (<= 0 x 65535)) (keyword? x) (and (vector? x) (= (first x) :+))))
+(defn imm8  [x] (and (integer? x) (<= -128 x 127)))
+(defn imm16 [x] (or (and (integer? x) (<= -32768 x 65535)) (keyword? x) (and (vector? x) (= (first x) :+))))
 (defn mem   [x] (and (vector? x) (not= (first x) :+)))
 (defn width [x] (first (filter +memory-widths+ x)))
 (defn mem8  [x] (and (mem x) (let [w (width x)] (or (nil? w) (= w :byte)))))
@@ -90,6 +90,12 @@
       [:cmp rm16 imm16]   [0x81 :7 :iw]
       [:cmp reg8 rm8]     [0x3a :r]
       [:cmp reg16 rm16]   [0x3b :r]
+      [:test :al imm8]    [0xa8 :ib]
+      [:test :ax imm16]   [0xa9 :iw]
+      [:test rm8 imm8]    [0xf6 :0 :ib]
+      [:test rm16 imm16]  [0xf7 :0 :iw]
+      [:test rm8 reg8]    [0x84 :r]
+      [:test rm16 reg16]  [0x85 :r]
       [:adc :al imm8]     [0x14 :ib]
       [:add rm8 reg8]     [0x00 :r]
       [:add rm16 reg16]   [0x01 :r]

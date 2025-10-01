@@ -192,15 +192,22 @@
       (throw (Exception. (str "Unbound variable: " symbol))))))
 
 (defn compile-def
-  [symbol expr {:keys [stack-pointer global-env-start] :as state}]
-  (-> (codeseq
-       state
+  [symbol expr {:keys [environment stack-pointer global-env-start] :as state}]
+  (let [existing (environment symbol)
+        offset (if existing (:offset existing) global-env-start)]
+    (cond-> state
+      true
+      (codeseq
        [:subexpr expr]
-       ['mov [global-env-start] :ax]
+       ['mov [offset] :ax])
+      (not existing)
+      (codeseq
        ['sub :sp 2]
        ['sub :bp 2])
+      (not existing)
       (update :environment conj (make-environment-element symbol :var global-env-start))
-      (update :global-env-start - repr/wordsize)))
+      (not existing)
+      (update :global-env-start - repr/wordsize))))
 
 (defn compile-closure
   [label free-vars orig-state]
