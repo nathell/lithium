@@ -98,6 +98,7 @@
 (defn ast->clojure [ast]
   (match ast
          :value [value] value
+         :long-value-ref [value] value
          :env-lookup [symbol] symbol
          :primitive-call [primitive args] `(~primitive ~@(map ast->clojure args))
          :if [condition then-expr else-expr] `(~'if ~(ast->clojure condition) ~(ast->clojure then-expr) ~(ast->clojure else-expr))

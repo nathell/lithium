@@ -29,7 +29,7 @@
         (if (< i cnt)
           (do
             (write-char (char-at s i))
-            (recur (+ i 1)))
+            (recur (inc i)))
           nil)))))
 
 (def xprint nil)
@@ -45,20 +45,58 @@
         (write-number x)
         (if (boolean? x)
           (print-str (if x "true" "false"))
-          (if (vector? x)
-            (do
-              (write-char \[)
-              (let [cnt (vector-length x)]
-                (loop [i 0]
-                  (xprint (vector-at x i))
-                  (if (< i (- cnt 1))
-                    (write-char \space)
-                    nil)
-                  (if (< i cnt)
-                    (recur (+ i 1))
-                    nil)))
-              (write-char \]))
-            (print-str "[unknown]")))))))
+          (if (nil? x)
+            (print-str "nil")
+            (if (vector? x)
+              (do
+                (write-char \[)
+                (let [cnt (vector-length x)]
+                  (loop [i 0]
+                    (xprint (vector-at x i))
+                    (if (< i (- cnt 1))
+                      (do
+                        (write-char \space)
+                        (recur (inc i)))
+                      nil)))
+                (write-char \]))
+              (print-str "[unknown]"))))))))
+
+(def first
+  (fn [x]
+    (if (nil? x)
+      nil
+      (if (cons? x)
+        (car x)
+        (if (vector? x)
+          (let [cnt (vector-length x)]
+            (if (= cnt 0)
+              nil
+              (vector-at x 0)))
+          nil)))))
+
+(def next
+  (fn [x]
+    (if (nil? x)
+      nil
+      (if (cons? x)
+        (cdr x)
+        (if (vector? x)
+          (let [cnt (vector-length x)]
+            (if (< cnt 2)
+              nil
+              (subvec x 1 cnt)))
+          nil)))))
+
+#_
+(def filter
+  (fn [f x]
+    (if x
+      (let [fst (first x)
+            nxt (next x)]
+        (if (f fst)
+          (cons x (filter f nxt))
+          (filter f nxt)))
+      nil)))
 
 #_(def print-mul
     (fn [a b]
@@ -72,6 +110,7 @@
 #_(print-str (if (number? 5) "yes\r\n" "no\r\n"))
 
 (xprint [42 "dupa" true])
-
+(print-str "\r\n")
+(xprint (first [nil]))
 
 #_(print-mul 23 79)

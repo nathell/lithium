@@ -40,7 +40,7 @@
         outer-xform (fn [ast]
                       (ast/match ast
                         long-value? [value value-type]
-                        #_=> (let [ref (get (swap! long-values update value #(or % {:value-type value-type, :ref (genkey)})) value)]
+                        #_=> (let [ref (get (swap! long-values update value #(or % {:value-type value-type, :ref (genkey), :value value})) value)]
                                (merge {:type :long-value-ref} ref))
                         :fn [args body bound-vars]
                         #_=> (let [label (gensym "cl")]
