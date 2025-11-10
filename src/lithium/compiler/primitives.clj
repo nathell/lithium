@@ -16,6 +16,7 @@
   (codeseq
    state
    [:subexpr b]
+   ['dec :ax]
    ['mov [:bp (:stack-pointer state)] :ax]
    [:subexpr a next-loc]
    ['add :ax [:bp (:stack-pointer state)]]))
@@ -26,41 +27,46 @@
    [:subexpr b]
    ['mov [:bp (:stack-pointer state)] :ax]
    [:subexpr a next-loc]
-   ['sub :ax [:bp (:stack-pointer state)]]))
+   ['sub :ax [:bp (:stack-pointer state)]]
+   ['inc :ax]))
 
 (defprimitive * [a b]
   (codeseq
    state
    [:subexpr b]
-   ['sar :ax 2]
+   ['sar :ax 1]
    ['mov [:bp (:stack-pointer state)] :ax]
    [:subexpr a next-loc]
-   ['mul [:word :bp (:stack-pointer state)]]))
+   ['dec :ax]
+   ['mul [:word :bp (:stack-pointer state)]]
+   ['inc :ax]))
 
 (defprimitive mod [a b]
   (codeseq
    state
    [:subexpr b]
-   ['sar :ax 2]
+   ['sar :ax 1]
    ['mov [:bp (:stack-pointer state)] :ax]
    [:subexpr a next-loc]
    ['mov :dx 0]
-   ['sar :ax 2]
+   ['sar :ax 1]
    ['div [:word :bp (:stack-pointer state)]]
    ['mov :ax :dx]
-   ['sal :ax 2]))
+   ['sal :ax 1]
+   ['inc :ax]))
 
 (defprimitive quot [a b]
   (codeseq
    state
    [:subexpr b]
-   ['sar :ax 2]
+   ['sar :ax 1]
    ['mov [:bp (:stack-pointer state)] :ax]
    [:subexpr a next-loc]
    ['mov :dx 0]
-   ['sar :ax 2]
+   ['sar :ax 1]
    ['div [:word :bp (:stack-pointer state)]]
-   ['sal :ax 2]))
+   ['sal :ax 1]
+   ['inc :ax]))
 
 (defprimitive = [a b]
   (let [l1 (genkey) l2 (genkey)]
@@ -87,14 +93,15 @@
    ['cmp :ax [:bp (:stack-pointer state)]]
    ['setb :bl]
    ['mov :ax :bx]
-   ['sal :ax 7]
-   ['or :ax repr/boolean-tag]))
+   ['sal :ax 1]
+   ['add :ax (repr/immediate false)]))
 
 (defprimitive write-char [x]
   (codeseq
    state
    [:subexpr x]
-   ['sar :ax 8]
+   ['sub :ax 6]
+   ['sar :ax 1]
    ['mov :ah 0x0e]
    ['int 0x10]))
 
@@ -107,35 +114,42 @@
   (codeseq
    state
    [:subexpr x]
-   ['add :ax (repr/immediate 1)]))
+   ['add :ax 2]))
 
 (defprimitive nil? [x]
   (codeseq
    state
    [:subexpr x]
-   ['cmp :ax repr/nil-tag]
+   ['cmp :ax (repr/immediate nil)]
    ['mov :ax 0]
    ['sete :al]
-   ['sal :ax 7]
-   ['or :ax repr/boolean-tag]))
+   ['sal :ax 1]
+   ['add :ax (repr/immediate false)]))
 
 (defprimitive cons [x y]
   (codeseq
    state
+   ['mov [:si] repr/cons-typeid]
    [:subexpr x]
-   ['mov [:si] :ax]
-   [:subexpr y]
    ['mov [:si repr/wordsize] :ax]
+   [:subexpr y]
+   ['mov [:si (* 2 repr/wordsize)] :ax]
    ['mov :ax :si]
-   ['or :ax repr/cons-tag]
-   ['add :si 8]))
+   ['add :si (* 3 repr/wordsize)]))
 
 (defprimitive car [x]
   (codeseq
    state
    [:subexpr x]
    ['mov :bx :ax]
-   ['mov :ax [:bx -1]]))
+   ['mov :ax [:bx repr/wordsize]]))
+
+(defprimitive cdr [x]
+  (codeseq
+   state
+   [:subexpr x]
+   ['mov :bx :ax]
+   ['mov :ax [:bx (* 2 repr/wordsize)]]))
 
 (defprimitive recur [& exprs]
   (let [orig-state state]
@@ -168,6 +182,8 @@
    ['mov :ax 0xa000]
    ['mov :es :ax]))
 
+;; TODO
+#_
 (defprimitive put-pixel [x y c]
   (codeseq
    state
@@ -185,30 +201,25 @@
    ['stosb]
    ['mov :di :cx]))
 
-(defprimitive cdr [x]
-  (codeseq
-   state
-   [:subexpr x]
-   ['mov :bx :ax]
-   ['mov :ax [:bx (dec repr/wordsize)]]))
-
 (defprimitive int->char [x]
   (codeseq
    state
    [:subexpr x]
-   ['sal :ax 6]
-   ['mov :al repr/char-tag]))
+   ['add :ax 5]))
 
 (defprimitive strlen [x]
   (codeseq
    state
    [:subexpr x]
    ['mov :bx :ax]
-   ['sub :bx repr/string-tag]
    ['xor :ax :ax]
-   ['mov :al [:bx]]
-   ['sal :ax 2]))
+   ['mov :ax [:bx]]
+   ['xor :ah :ah]
+   ['sal :ax 1]
+   ['inc :ax]))
 
+;; TODO – needs copy in the new paradigm
+#_
 (defprimitive symbol->string [x]
   (codeseq
    state
@@ -220,35 +231,33 @@
    state
    [:subexpr s]
    ['mov :bx :ax]
-   ['sub :bx repr/string-tag]
    [:subexpr i]
-   ['sar :ax 2]
-   ['inc :ax]
+   ['sar :ax 1]
+   ['add :ax 2]
    ['add :bx :ax]
-   ['mov :ah [:bx]]
-   ['mov :al repr/char-tag]))
+   ['xor :ax :ax]
+   ['mov :al [:bx]]
+   ['sal :ax 1]
+   ['add :ax 6]))
 
 (defprimitive vector-length [v]
   (codeseq
    state
    [:subexpr v]
    ['mov :bx :ax]
-   ['sub :bx repr/vector-tag]
-   ['mov :ax [:bx]]))
+   ['mov :ax [:bx repr/wordsize]]))
 
 (defprimitive vector-at [v n]
   (codeseq
    state
    [:subexpr v]
-   ;; the tag for vectors is 2 and we should first subtract it
-   ;; from ax, then skip again by 2 omitting the length field –
-   ;; this cancels out
    ['mov :bx :ax]
    [:subexpr n]
-   ['sar :ax 1]
    ['add :bx :ax]
-   ['mov :ax [:bx]]))
+   ['mov :ax [:bx 3]]))
 
+;; TODO
+#_
 (defmacro deftypecheck [name tag-width tag]
   `(defprimitive ~name [x#]
      (let [l1# (genkey)]
@@ -262,11 +271,13 @@
         ['add :ax 128]
         l1#))))
 
-(deftypecheck number? 2 repr/number-tag)
-(deftypecheck vector? 3 repr/vector-tag)
-(deftypecheck fn? 3 repr/closure-tag)
-(deftypecheck cons? 3 repr/cons-tag)
-(deftypecheck string? 3 repr/string-tag)
-(deftypecheck keyword? 3 repr/symbol-tag)
-(deftypecheck char? 8 repr/symbol-tag)
-(deftypecheck boolean? 7 repr/boolean-tag)
+;; TODO
+(comment
+  (deftypecheck number? 2 repr/number-tag)
+  (deftypecheck vector? 3 repr/vector-tag)
+  (deftypecheck fn? 3 repr/closure-tag)
+  (deftypecheck cons? 3 repr/cons-tag)
+  (deftypecheck string? 3 repr/string-tag)
+  (deftypecheck keyword? 3 repr/symbol-tag)
+  (deftypecheck char? 8 repr/symbol-tag)
+  (deftypecheck boolean? 7 repr/boolean-tag))
