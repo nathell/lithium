@@ -38,6 +38,18 @@ For instance, I don't picture myself writing a full-blown Web browser in Lithium
 
 But one can't live in total isolation. I would like to have basic UTF-8 support, for example. Some I/O for HUD and networking. A TCP/IP stack.
 
+## 16-bit?
+
+I started out with targetting 16-bit x86 because it's simple. But there's more to it than that. The tiny memory model can be looked at as a 16-bit equivalent of a protected-mode 32/64-bit flat memory model; the segmentation is out of the picture. I'd like to see how much it's possible to fit in 64 KiB.
+
+I once read in "Bajtek", quoting the original Polish:
+
+> Kiedy na Spectrum coś działało zbyt wolno, to trzeba było zoptymalizować algorytm. Teraz, w epoce PC-tów, po prostu kupuje się szybszy komputer. I to ma być informatyka? Kochani, 48 KB to niezmierzona przestrzeń!
+
+## Speaking of segmentation
+
+Could it be used to facilitate system-wide garbage collection?
+
 ## Imagine
 
 Imagine a modern Clojure-based operating system, for modern computers, but also for old hardware.
